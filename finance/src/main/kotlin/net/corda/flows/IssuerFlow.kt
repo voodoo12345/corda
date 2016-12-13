@@ -1,19 +1,13 @@
 package net.corda.flows
 
 import co.paralleluniverse.fibers.Suspendable
-import net.corda.core.ThreadBox
 import net.corda.core.contracts.*
 import net.corda.core.crypto.Party
-import net.corda.core.crypto.SecureHash
 import net.corda.core.flows.FlowLogic
-import net.corda.core.node.NodeInfo
 import net.corda.core.node.PluginServiceHub
 import net.corda.core.serialization.OpaqueBytes
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.utilities.ProgressTracker
-import net.corda.flows.CashCommand
-import net.corda.flows.CashFlow
-import net.corda.flows.CashFlowResult
 import java.util.*
 
 /**
@@ -97,20 +91,29 @@ object IssuerFlow {
                 if (issueTo.equals(serviceHub.myInfo.legalIdentity))
                     return (resultIssue as CashFlowResult.Success).transaction!!
                 // now invoke Cash subflow to Move issued assetType to issue requester
-                progressTracker.currentStep = TRANSFERRING
-                val moveCashFlow = CashFlow(CashCommand.PayCash(amount.issuedBy(bankOfCordaParty.ref(issuerPartyRef)), issueTo))
-                val resultMove = subFlow(moveCashFlow)
-                // NOTE: CashFlow PayCash calls FinalityFlow which performs a Broadcast (which stores a local copy of the txn to the ledger)
-                if (resultMove is CashFlowResult.Failed) {
-                    logger.error("Problem transferring cash: ${resultMove.message}")
-                    throw Exception(resultMove.message)
-                }
-                val txn = (resultMove as CashFlowResult.Success).transaction
+                val txn = (resultIssue as CashFlowResult.Success).transaction
                 txn?.let {
-                    return txn
+                    // re-use issued output in move
+                    check(txn.tx.outputs.size == 1)
+                    serviceHub.vaultService.softLockReserve(fsm.id.uuid, setOf(StateRef(txn.id, 0)))
+                    progressTracker.currentStep = TRANSFERRING
+                    val moveCashFlow = CashFlow(CashCommand.PayCash(amount.issuedBy(bankOfCordaParty.ref(issuerPartyRef)), issueTo))
+                    val resultMove = subFlow(moveCashFlow)
+                    // NOTE: CashFlow PayCash calls FinalityFlow which performs a Broadcast (which stores a local copy of the txn to the ledger)
+                    if (resultMove is CashFlowResult.Failed) {
+                        logger.error("Problem transferring cash: ${resultMove.message}")
+                        throw Exception(resultMove.message)
+                    }
+                    val txn = (resultMove as CashFlowResult.Success).transaction
+                    txn?.let {
+                        serviceHub.vaultService.softLockRelease(fsm.id.uuid)
+                        return txn
+                    }
+                    // NOTE: CashFlowResult.Success should always return a signedTransaction
+                    throw Exception("Missing CashFlow transaction [${(resultMove)}]")
                 }
                 // NOTE: CashFlowResult.Success should always return a signedTransaction
-                throw Exception("Missing CashFlow transaction [${(resultMove)}]")
+                throw Exception("Missing CashFlow transaction [${(resultIssue)}]")
             }
             // catch and report exception before throwing back to caller flow
             catch (e: Exception) {

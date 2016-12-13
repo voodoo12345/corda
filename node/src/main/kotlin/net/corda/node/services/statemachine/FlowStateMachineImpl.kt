@@ -12,8 +12,10 @@ import net.corda.core.flows.FlowLogic
 import net.corda.core.flows.FlowStateMachine
 import net.corda.core.flows.StateMachineRunId
 import net.corda.core.random63BitValue
+import net.corda.core.transactions.SignedTransaction
 import net.corda.core.utilities.UntrustworthyData
 import net.corda.core.utilities.trace
+import net.corda.flows.CashFlowResult
 import net.corda.node.services.api.ServiceHubInternal
 import net.corda.node.services.statemachine.StateMachineManager.FlowSession
 import net.corda.node.services.statemachine.StateMachineManager.FlowSessionState
@@ -88,6 +90,15 @@ class FlowStateMachineImpl<R>(override val id: StateMachineRunId,
             actionOnEnd()
             _resultFuture?.setException(t)
             throw ExecutionException(t)
+        }
+
+        when (result) {
+            is SignedTransaction -> {
+                println("Flow call() returned: Signed Transaction detected for txn id ${result.id}")
+            }
+            is CashFlowResult.Success -> {
+                println("Flow call() returned: Cash Flow Transaction detected for txn id ${result.transaction?.id}")
+            }
         }
 
         // This is to prevent actionOnEnd being called twice if it throws an exception
