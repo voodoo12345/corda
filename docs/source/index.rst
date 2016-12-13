@@ -107,6 +107,7 @@ Documentation Contents:
    network-simulator
    clauses
    merkle-trees
+   contract-upgrade
 
 .. toctree::
    :maxdepth: 2
