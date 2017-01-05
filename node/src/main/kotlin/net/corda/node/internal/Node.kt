@@ -17,11 +17,11 @@ import net.corda.node.services.RPCUserService
 import net.corda.node.services.RPCUserServiceImpl
 import net.corda.node.services.api.MessagingServiceInternal
 import net.corda.node.services.config.FullNodeConfiguration
+import net.corda.node.services.messaging.ArtemisMessagingComponent.Companion.NODE_USER
 import net.corda.node.services.messaging.ArtemisMessagingComponent.NetworkMapAddress
 import net.corda.node.services.messaging.ArtemisMessagingServer
 import net.corda.node.services.messaging.CordaRPCClient
 import net.corda.node.services.messaging.NodeMessagingClient
-import net.corda.node.services.startFlowPermission
 import net.corda.node.services.transactions.PersistentUniquenessProvider
 import net.corda.node.services.transactions.RaftUniquenessProvider
 import net.corda.node.services.transactions.RaftValidatingNotaryService
@@ -50,10 +50,10 @@ import java.net.InetAddress
 import java.nio.channels.FileLock
 import java.time.Clock
 import java.util.*
+import java.util.concurrent.CompletableFuture
 import javax.management.ObjectName
 import javax.servlet.*
 import kotlin.concurrent.thread
-import net.corda.node.services.messaging.ArtemisMessagingComponent.Companion.NODE_USER
 
 class ConfigurationException(message: String) : Exception(message)
 
@@ -305,11 +305,14 @@ class Node(override val configuration: FullNodeConfiguration, networkMapAddress:
         return client.proxy()
     }
 
+    /** Completes when all node services have started. */
+    val startupComplete = CompletableFuture<Unit>()
+
     override fun start(): Node {
         alreadyRunningNodeCheck()
         super.start()
-        // Only start the service API requests once the network map registration is complete
-        thread(name = "WebServer") {
+        thread(isDaemon = true) {
+            // Only start the service API requests once the network map registration is complete
             networkMapRegistrationFuture.getOrThrow()
             try {
                 webServer = initWebServer(connectLocalRpcAsNodeUser())
@@ -333,6 +336,8 @@ class Node(override val configuration: FullNodeConfiguration, networkMapAddress:
                     }.
                     build().
                     start()
+
+            startupComplete.complete(Unit)
         }
         shutdownThread = thread(start = false) {
             stop()
@@ -367,7 +372,6 @@ class Node(override val configuration: FullNodeConfiguration, networkMapAddress:
                 shutdownThread = null
             }
         }
-        printBasicNodeInfo("Shutting down ...")
 
         // All the Node started subsystems were registered with the runOnStop list at creation.
         // So now simply call the parent to stop everything in reverse order.

@@ -5,19 +5,29 @@ import joptsimple.OptionParser
 import net.corda.core.div
 import net.corda.core.randomOrNull
 import net.corda.core.rootCause
-import net.corda.core.then
 import net.corda.core.utilities.Emoji
 import net.corda.node.internal.Node
 import net.corda.node.services.config.ConfigHelper
 import net.corda.node.services.config.FullNodeConfiguration
-import net.corda.node.utilities.ANSIProgressObserver
+import org.crsh.console.jline.JLineProcessor
+import org.crsh.console.jline.TerminalFactory
+import org.crsh.console.jline.console.ConsoleReader
+import org.crsh.standalone.Bootstrap
+import org.crsh.util.InterruptHandler
+import org.crsh.vfs.FS
+import org.crsh.vfs.spi.url.ClassPathMountFactory
 import org.fusesource.jansi.Ansi
 import org.fusesource.jansi.AnsiConsole
 import org.slf4j.LoggerFactory
+import java.io.FileDescriptor
+import java.io.FileInputStream
 import java.lang.management.ManagementFactory
 import java.net.InetAddress
+import java.nio.file.Path
 import java.nio.file.Paths
 import java.time.LocalDate
+import java.util.*
+import kotlin.concurrent.thread
 import kotlin.system.exitProcess
 
 private var renderBasicInfoToConsole = true
@@ -73,6 +83,7 @@ fun main(args: Array<String>) {
 
     val log = LoggerFactory.getLogger("Main")
     printBasicNodeInfo("Logs can be found in", System.getProperty("log-path"))
+
     val configFile = if (cmdlineOptions.has(configFileArg)) Paths.get(cmdlineOptions.valueOf(configFileArg)) else null
     val conf = try {
         FullNodeConfiguration(ConfigHelper.loadConfig(baseDirectoryPath, configFile))
@@ -80,7 +91,7 @@ fun main(args: Array<String>) {
         println("Unable to load the configuration file: ${e.rootCause.message}")
         exitProcess(2)
     }
-    val dir = conf.basedir.toAbsolutePath().normalize()
+    val dir: Path = conf.basedir.toAbsolutePath().normalize()
 
     log.info("Main class: ${FullNodeConfiguration::class.java.protectionDomain.codeSource.location.toURI().getPath()}")
     val info = ManagementFactory.getRuntimeMXBean()
@@ -102,12 +113,11 @@ fun main(args: Array<String>) {
         node.start()
         printPluginsAndServices(node)
 
-        node.networkMapRegistrationFuture.then {
+        node.startupComplete.thenAccept {
             val elapsed = (System.currentTimeMillis() - startTime) / 10 / 100.0
             printBasicNodeInfo("Node started up and registered in $elapsed sec")
 
-            if (renderBasicInfoToConsole)
-                ANSIProgressObserver(node.smm)
+            startShell(dir) { node.stop() }
         }
         node.run()
     } catch (e: Exception) {
@@ -115,6 +125,54 @@ fun main(args: Array<String>) {
         exitProcess(1)
     }
     exitProcess(0)
+}
+
+fun startShell(dir: Path, whenDone: () -> Unit) {
+    try {
+        // Disable JDK logging, which CRaSH uses.
+        //java.util.logging.Logger.getLogger("").level = Level.OFF
+
+        val classpathDriver = ClassPathMountFactory(Thread.currentThread().contextClassLoader)
+        val commandsFS = FS.Builder()
+                .register("classpath", classpathDriver)
+                .mount("classpath:/net/corda/cmdshell/")
+                .mount("classpath:/crash/commands/")
+                .build()
+        // TODO: Re-point to our own conf path.
+        val confFS = FS.Builder()
+                .register("classpath", classpathDriver)
+                .mount("classpath:/crash")
+                .build()
+        val bootstrap = Bootstrap(Thread.currentThread().contextClassLoader, confFS, commandsFS)
+
+        // Enable SSH access. Note: these have to be strings, even though raw object assignments also work.
+        val config = Properties()
+        config["crash.ssh.keypath"] = (dir / "sshkey").toString()
+        config["crash.ssh.keygen"] = "true"
+        config["crash.ssh.port"] = "2000"
+        config["crash.auth"] = "simple"
+        config["crash.auth.simple.username"] = "admin"
+        config["crash.auth.simple.password"] = "admin"
+
+        bootstrap.config = config
+        bootstrap.bootstrap()
+        val shell = bootstrap.context.getPlugin(org.crsh.shell.ShellFactory::class.java).create(null)
+        val terminal = TerminalFactory.create()
+        val consoleReader = ConsoleReader("Corda", FileInputStream(FileDescriptor.`in`), System.out, terminal)
+        val jlineProcessor =  JLineProcessor(terminal.isAnsiSupported, shell, consoleReader, System.out)
+        InterruptHandler { jlineProcessor.interrupt() }.install()
+        thread(name = "Command line shell processor", isDaemon = true) {
+            jlineProcessor.run()
+        }
+        thread(name = "Command line shell terminator", isDaemon = true) {
+            // Wait for the shell to finish.
+            jlineProcessor.closed()
+            terminal.restore()
+            whenDone()
+        }
+    } catch(e: Throwable) {
+        e.printStackTrace()
+    }
 }
 
 private fun checkJavaVersion() {

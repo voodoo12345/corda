@@ -150,6 +150,10 @@ dependencies {
     compile 'io.atomix.copycat:copycat-client:1.1.4'
     compile 'io.atomix.copycat:copycat-server:1.1.4'
     compile 'io.atomix.catalyst:catalyst-netty:1.1.1'
+    
+    // CRaSH: An embeddable, SSH supporting shell library.
+    compile "org.crashub:crash.shell:$crash_version"
+    compile "org.crashub:crash.connectors.ssh:$crash_version"
 
     // Integration test helpers
     integrationTestCompile "junit:junit:$junit_version"
