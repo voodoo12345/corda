@@ -40,7 +40,7 @@ val DEFAULT_SESSION_ID = 0L
  *   Active means they haven't been consumed yet (or we don't know about it).
  *   Relevant means they contain at least one of our pubkeys.
  */
-class Vault(val states: List<StateAndRef<ContractState>>) {
+class Vault(val states: Iterable<StateAndRef<ContractState>>) {
     @Suppress("UNCHECKED_CAST")
     inline fun <reified T : ContractState> statesOfType() = states.filter { it.state.data is T } as List<StateAndRef<T>>
 
@@ -85,6 +85,10 @@ class Vault(val states: List<StateAndRef<ContractState>>) {
     companion object {
         val NoUpdate = Update(emptySet(), emptySet())
     }
+
+    enum class StateStatus {
+        AWAITING_CONSENSUS, CONSENSUS_AGREED_UNCONSUMED, CONSENSUS_AGREED_CONSUMED
+    }
 }
 
 /**
@@ -96,11 +100,6 @@ class Vault(val states: List<StateAndRef<ContractState>>) {
  * Note that transactions we've seen are held by the storage service, not the vault.
  */
 interface VaultService {
-    /**
-     * Returns a read-only snapshot of the vault at the time the call is made. Note that if you consume states or
-     * keys in this vault, you must inform the vault service so it can update its internal state.
-     */
-    val currentVault: Vault
 
     /**
      * Prefer the use of [updates] unless you know why you want to use this instead.
@@ -131,23 +130,7 @@ interface VaultService {
      */
     fun track(): Pair<Vault, Observable<Vault.Update>>
 
-    /**
-     * Returns a snapshot of the heads of LinearStates.
-     */
-    val linearHeads: Map<UniqueIdentifier, StateAndRef<LinearState>>
-
-    // TODO: When KT-10399 is fixed, rename this and remove the inline version below.
-
-    /** Returns the [linearHeads] only when the type of the state would be considered an 'instanceof' the given type. */
-    @Suppress("UNCHECKED_CAST")
-    fun <T : LinearState> linearHeadsOfType_(stateType: Class<T>): Map<UniqueIdentifier, StateAndRef<T>> {
-        return linearHeads.filterValues { stateType.isInstance(it.state.data) }.mapValues { StateAndRef(it.value.state as TransactionState<T>, it.value.ref) }
-    }
-
-    fun statesForRefs(refs: List<StateRef>): Map<StateRef, TransactionState<*>?> {
-        val refsToStates = currentVault.states.associateBy { it.ref }
-        return refs.associateBy({ it }, { refsToStates[it]?.state })
-    }
+    fun statesForRefs(refs: List<StateRef>): Map<StateRef, TransactionState<*>?>
 
     /**
      * Possibly update the vault by marking as spent states that these transactions consume, and adding any relevant
@@ -187,9 +170,30 @@ interface VaultService {
                       amount: Amount<Currency>,
                       to: CompositeKey,
                       onlyFromParties: Set<Party>? = null): Pair<TransactionBuilder, List<CompositeKey>>
+
+    /**
+     * return [ContractState]'s of a given [Contract] type and list of [Vault.StateStatus]
+     */
+    fun <T : ContractState> states(clazz: Class<T>, statuses: Set<Vault.StateStatus>): List<StateAndRef<T>>
 }
 
-inline fun <reified T : LinearState> VaultService.linearHeadsOfType() = linearHeadsOfType_(T::class.java)
+inline fun <reified T: ContractState> VaultService.unconsumedStates(): List<StateAndRef<T>> =
+        states(T::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED))
+
+inline fun <reified T: ContractState> VaultService.consumedStates(): List<StateAndRef<T>> =
+        states(T::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_CONSUMED))
+
+/** Returns a snapshot of the heads of [LinearState] */
+val VaultService.linearHeads: Map<UniqueIdentifier, StateAndRef<LinearState>>
+    get() =
+        states(LinearState::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED))
+                .associateBy{ it.state.data.linearId }.mapValues { it.value }
+
+/** Returns the [linearState] heads only when the type of the state would be considered an 'instanceof' the given type. */
+inline fun <reified T : LinearState> VaultService.linearHeadsOfType() =
+        states(T::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED))
+                .associateBy { it.state.data.linearId }.mapValues { it.value }
+
 inline fun <reified T : DealState> VaultService.dealsWith(party: Party) = linearHeadsOfType<T>().values.filter {
     // TODO: Replace name comparison with full party comparison (keys are currenty not equal)
     it.state.data.parties.any { it.name == party.name }

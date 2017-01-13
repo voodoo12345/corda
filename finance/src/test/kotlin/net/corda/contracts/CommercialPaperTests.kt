@@ -227,7 +227,7 @@ class CommercialPaperTestsGeneric {
         databaseTransaction(databaseAlice) {
 
             aliceServices = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this)
+                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {
@@ -246,7 +246,7 @@ class CommercialPaperTestsGeneric {
         databaseTransaction(databaseBigCorp) {
 
             bigCorpServices = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this)
+                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {
