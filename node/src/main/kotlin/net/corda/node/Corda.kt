@@ -7,6 +7,7 @@ import net.corda.core.utilities.Emoji
 import net.corda.node.internal.Node
 import net.corda.node.services.config.FullNodeConfiguration
 import net.corda.node.utilities.ANSIProgressObserver
+import net.corda.node.webserver.WebServer
 import org.fusesource.jansi.Ansi
 import org.fusesource.jansi.AnsiConsole
 import org.slf4j.LoggerFactory
@@ -77,25 +78,30 @@ fun main(args: Array<String>) {
     log.info("VM ${info.vmName} ${info.vmVendor} ${info.vmVersion}")
     log.info("Machine: ${InetAddress.getLocalHost().hostName}")
     log.info("Working Directory: ${cmdlineOptions.baseDirectory}")
+    log.info("Started as webserver: ${cmdlineOptions.isWebserver}")
 
     try {
         cmdlineOptions.baseDirectory.createDirectories()
 
-        val node = conf.createNode()
-        node.start()
-        printPluginsAndServices(node)
+        if(!cmdlineOptions.isWebserver) {
+            val node = conf.createNode()
+            node.start()
+            printPluginsAndServices(node)
 
-        node.networkMapRegistrationFuture.success {
-            val elapsed = (System.currentTimeMillis() - startTime) / 10 / 100.0
-            printBasicNodeInfo("Node started up and registered in $elapsed sec")
+            node.networkMapRegistrationFuture.success {
+                val elapsed = (System.currentTimeMillis() - startTime) / 10 / 100.0
+                printBasicNodeInfo("Node started up and registered in $elapsed sec")
 
-            if (renderBasicInfoToConsole)
-                ANSIProgressObserver(node.smm)
-        } failure {
-            log.error("Error during network map registration", it)
-            exitProcess(1)
+                if (renderBasicInfoToConsole)
+                    ANSIProgressObserver(node.smm)
+            } failure {
+                log.error("Error during network map registration", it)
+                exitProcess(1)
+            }
+            node.run()
+        } else {
+            WebServer(conf).start()
         }
-        node.run()
     } catch (e: Exception) {
         log.error("Exception during node startup", e)
         exitProcess(1)
