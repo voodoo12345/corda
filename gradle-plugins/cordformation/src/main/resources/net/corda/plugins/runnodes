@@ -8,7 +8,7 @@ export CAPSULE_CACHE_DIR=cache
 basedir=$( dirname "$0" )
 cd "$basedir"
 
-if which osascript >/dev/null; then
+function runnodesMac {
     # MacOS X: open each node in a in new tab.
     first=true
     script='tell app "Terminal"
@@ -21,16 +21,20 @@ if which osascript >/dev/null; then
     tell application \"System Events\" to tell process \"Terminal\" to keystroke \"t\" using command down
     delay 0.5
     do script \"$cmd\" in window 1"
+            cmd="bash -c 'cd $rootdir/$dir; /usr/libexec/java_home -v 1.8 --exec java -jar JAR_NAME --webserver && exit'"
+            script="$script
+    tell application \"System Events\" to tell process \"Terminal\" to keystroke \"t\" using command down
+    delay 0.5
+    do script \"$cmd\" in window 1"
             first=false
         fi
     done
     script="$script
 end tell"
     osascript -e "$script"
-else
-    # Some other UNIX, probably Linux (does not support msys or cygwin)
-    # TODO: msys and cygwin support
-    #
+}
+
+function runnodesLinux {
     # If it is set, it means that java overrides the default system java, which is what we want.
     if [ -n "${JAVA_HOME-}" ]; then
 	export PATH="$JAVA_HOME/bin:$PATH"
@@ -39,7 +43,42 @@ else
         if [ -d $dir ]; then
             pushd $dir >/dev/null
             xterm -T "`basename $dir`" -e 'java -jar JAR_NAME' &
+            xterm -T "`basename $dir`" -e 'java -jar JAR_NAME --webserver' &
             popd >/dev/null
         fi
     done
-fi
+}
+
+function runnodesWindows {
+    set unixJavaHome=`cygpath ${JAVA_HOME}`
+    # If it is set, it means that java overrides the default system java, which is what we want.
+    if [ -n "${unixJavaHome-}" ]; then
+	    export PATH="$JAVA_HOME/bin:$unixJavaHome"
+    fi
+    for dir in `ls`; do
+        if [ -d $dir ]; then
+            pushd $dir >/dev/null
+            (java -jar JAR_NAME) &
+            (java -jar JAR_NAME --webserver) &
+            popd >/dev/null
+        fi
+    done
+}
+
+case "$(uname -s)" in
+   Darwin)
+     runnodesMac
+     ;;
+
+   Linux)
+     runnodesLinux
+     ;;
+
+   CYGWIN*|MINGW32*|MSYS*)
+     runnodesWindows
+     ;;
+
+   *)
+     runnodesLinux
+     ;;
+esac

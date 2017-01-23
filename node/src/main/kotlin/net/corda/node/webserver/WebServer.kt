@@ -3,6 +3,7 @@ package net.corda.node.webserver
 import net.corda.core.messaging.CordaRPCOps
 import net.corda.core.node.CordaPluginRegistry
 import net.corda.core.utilities.loggerFor
+import net.corda.node.printBasicNodeInfo
 import net.corda.node.services.config.FullNodeConfiguration
 import net.corda.node.services.messaging.ArtemisMessagingComponent
 import net.corda.node.services.messaging.CordaRPCClient
@@ -31,9 +32,14 @@ class WebServer(val config: FullNodeConfiguration) {
     }
 
     val address = config.webAddress
+    private lateinit var server: Server
 
     fun start() {
-        val server = initWebServer(connectLocalRpcAsNodeUser())
+        printBasicNodeInfo("Starting as webserver: ${config.webAddress}")
+        server = initWebServer(connectLocalRpcAsNodeUser())
+    }
+
+    fun run() {
         while(server.isRunning) {
             Thread.sleep(100) // TODO: Redesign
         }
@@ -85,7 +91,7 @@ class WebServer(val config: FullNodeConfiguration) {
             val httpConfiguration = HttpConfiguration()
             httpConfiguration.outputBufferSize = 32768
             val httpConnector = ServerConnector(server, HttpConnectionFactory(httpConfiguration))
-            println("Starting webserver on address $address")
+            log.info("Starting webserver on address $address")
             httpConnector.port = address.port
             httpConnector
         }
@@ -94,7 +100,7 @@ class WebServer(val config: FullNodeConfiguration) {
         server.handler = handlerCollection
         //runOnStop += Runnable { server.stop() }
         server.start()
-        println("Server started")
+        log.info("Server started")
         log.info("Embedded web server is listening on", "http://${InetAddress.getLocalHost().hostAddress}:${connector.port}/")
         return server
     }
