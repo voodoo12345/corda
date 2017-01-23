@@ -12,6 +12,7 @@ import net.corda.node.webserver.servlets.ObjectMapperConfig
 import net.corda.node.webserver.servlets.DataUploadServlet
 import net.corda.node.webserver.servlets.ResponseFilter
 import net.corda.node.webserver.internal.APIServerImpl
+import org.apache.activemq.artemis.api.core.ActiveMQNotConnectedException
 import org.eclipse.jetty.server.*
 import org.eclipse.jetty.server.handler.HandlerCollection
 import org.eclipse.jetty.servlet.DefaultServlet
@@ -29,6 +30,8 @@ import java.util.*
 class WebServer(val config: FullNodeConfiguration) {
     private companion object {
         val log = loggerFor<WebServer>()
+        val maxRetries = 60 // TODO: Make configurable
+        val retryDelay = 1000L // Milliseconds
     }
 
     val address = config.webAddress
@@ -36,7 +39,7 @@ class WebServer(val config: FullNodeConfiguration) {
 
     fun start() {
         printBasicNodeInfo("Starting as webserver: ${config.webAddress}")
-        server = initWebServer(connectLocalRpcAsNodeUser())
+        server = initWebServer(connectLocalRpcWithRetries(maxRetries))
     }
 
     fun run() {
@@ -148,6 +151,22 @@ class WebServer(val config: FullNodeConfiguration) {
             addServlet(jerseyServlet, "/api/*")
             jerseyServlet.initOrder = 0 // Initialise at server start
         }
+    }
+
+    private fun connectLocalRpcWithRetries(retries: Int): CordaRPCOps {
+        for(i in 0..retries - 1) {
+            try {
+                log.info("Connecting to node at ${config.artemisAddress} as node user")
+                val client = CordaRPCClient(config.artemisAddress, config)
+                client.start(ArtemisMessagingComponent.NODE_USER, ArtemisMessagingComponent.NODE_USER)
+                return client.proxy()
+            } catch (e: ActiveMQNotConnectedException) {
+                log.debug("Could not connect to ${config.artemisAddress} due to exception: ", e)
+                Thread.sleep(retryDelay)
+            }
+        }
+
+        return connectLocalRpcAsNodeUser()
     }
 
     private fun connectLocalRpcAsNodeUser(): CordaRPCOps {
