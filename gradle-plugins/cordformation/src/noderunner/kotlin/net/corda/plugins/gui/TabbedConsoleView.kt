@@ -1,6 +1,7 @@
 package net.corda.plugins.gui
 
 import javafx.scene.control.TabPane
+import net.corda.plugins.NodeRunner
 import tornadofx.View
 import tornadofx.plusAssign
 import tornadofx.tab
@@ -10,9 +11,11 @@ import tornadofx.tabpane
 // whether we are headless or not.
 class TabbedConsoleView : View() {
     override val root = tabpane {
+        // TODO: Allow and kill process on tab close
         tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
-        //for (i in 0..numTabs) {
-        //    tab("$i") { this += ConsoleView() }
-        //}
+    }
+
+    fun attachConsole(cordaProc: NodeRunner.CordaProcess) {
+        root.tab(cordaProc.name) { this += ConsoleView() }
     }
 }
