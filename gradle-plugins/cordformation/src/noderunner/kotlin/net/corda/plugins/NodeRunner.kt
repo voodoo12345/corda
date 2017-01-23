@@ -1,5 +1,7 @@
 package net.corda.plugins
 
+import javafx.application.Application
+import net.corda.plugins.gui.NodeRunnerApp
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -30,6 +32,8 @@ class NodeRunner {
                 startWebServer(it)
             }
         }
+
+        Application.launch(NodeRunnerApp::class.java, "${processes.size}")
 
         println("Started ${processes.size} processes")
         println("Press Ctrl + C to exit")
