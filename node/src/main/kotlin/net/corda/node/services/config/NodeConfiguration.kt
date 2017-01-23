@@ -32,56 +32,68 @@ interface NodeConfiguration : NodeSSLConfiguration {
     val nearestCity: String
     val emailAddress: String
     val exportJMXto: String
-    val dataSourceProperties: Properties get() = Properties()
-    val rpcUsers: List<User> get() = emptyList()
+    val dataSourceProperties: Properties
+    val rpcUsers: List<User>
     val devMode: Boolean
 }
 
+//class FullNodeConfiguration(override val keyStorePassword: String,
+//                            override val trustStorePassword: String,
+//                            override val basedir: Path,
+//                            override val myLegalName: String,
+//                            override val networkMapService: NetworkMapInfo?,
+//                            override val nearestCity: String,
+//                            override val emailAddress: String,
+//                            override val dataSourceProperties: Properties,
+//                            override val rpcUsers: List<User> = emptyList(),
+//                            override val devMode: Boolean = false,
+//                            val useHTTPS: Boolean,
+//                            val artemisAddress: HostAndPort,
+//                            val webAddress: HostAndPort,
+//                            val messagingServerAddress: HostAndPort? = null,
+//                            // TODO Make this Set<ServiceInfo>
+//                            val extraAdvertisedServiceIds: List<String>,
+//                            val useTestClock: Boolean = false,
+//                            val notaryNodeAddress: HostAndPort? = null,
+//                            val notaryClusterAddresses: List<HostAndPort> = emptyList()) : NodeConfiguration {
 /**
  * [baseDirectory] is not retrieved from the config file but rather from a command line argument.
  */
-class FullNodeConfiguration(override val baseDirectory: Path, val config: Config) : NodeConfiguration {
-    override val myLegalName: String by config
-    override val nearestCity: String by config
-    override val emailAddress: String by config
-    override val exportJMXto: String get() = "http"
-    override val keyStorePassword: String by config
-    override val trustStorePassword: String by config
-    override val dataSourceProperties: Properties by config
-    override val devMode: Boolean by config.getOrElse { false }
-    override val networkMapService: NetworkMapInfo? = config.getOptionalConfig("networkMapService")?.run {
-        NetworkMapInfo(
-                HostAndPort.fromString(getString("address")),
-                getString("legalName"))
-    }
-    override val rpcUsers: List<User> = config
-            .getListOrElse<Config>("rpcUsers") { emptyList() }
-            .map {
-                val username = it.getString("user")
-                require(username.matches("\\w+".toRegex())) { "Username $username contains invalid characters" }
-                val password = it.getString("password")
-                val permissions = it.getListOrElse<String>("permissions") { emptyList() }.toSet()
-                User(username, password, permissions)
-            }
-    val useHTTPS: Boolean by config
-    val artemisAddress: HostAndPort by config
-    val webAddress: HostAndPort by config
+    class FullNodeConfiguration(override val baseDirectory: Path, val config: Config) : NodeConfiguration {
+        override val myLegalName: String by config
+        override val nearestCity: String by config
+        override val emailAddress: String by config
+        override val exportJMXto: String get() = "http"
+        override val keyStorePassword: String by config
+        override val trustStorePassword: String by config
+        override val dataSourceProperties: Properties by config
+        override val devMode: Boolean by config.orElse { false }
+        override val networkMapService: NetworkMapInfo? by config.orElse { null }
+        override val rpcUsers: List<User> by config.orElse { emptyList<User>() }
+        val useHTTPS: Boolean by config
+        val artemisAddress: HostAndPort by config
+        val webAddress: HostAndPort by config
     // TODO This field is slightly redundant as artemisAddress is sufficient to hold the address of the node's MQ broker.
     // Instead this should be a Boolean indicating whether that broker is an internal one started by the node or an external one
-    val messagingServerAddress: HostAndPort? by config.getOrElse { null }
-    val extraAdvertisedServiceIds: String by config
-    val useTestClock: Boolean by config.getOrElse { false }
-    val notaryNodeAddress: HostAndPort? by config.getOrElse { null }
-    val notaryClusterAddresses: List<HostAndPort> = config
-            .getListOrElse<String>("notaryClusterAddresses") { emptyList() }
-            .map { HostAndPort.fromString(it) }
+        val messagingServerAddress: HostAndPort? by config.orElse { null }
+        // TODO Make this Set<ServiceInfo>
+        val extraAdvertisedServiceIds: List<String> by config
+        val useTestClock: Boolean by config.orElse { false }
+        val notaryNodeAddress: HostAndPort? by config.orElse { null }
+        val notaryClusterAddresses: List<HostAndPort> by config.orElse { emptyList<HostAndPort>() }
+//    override val exportJMXto: String get() = "http"
+    init {
+        // TODO Move this to AretmisMessagingServer
+        rpcUsers.forEach {
+            require(it.username.matches("\\w+".toRegex())) { "Username ${it.username} contains invalid characters" }
+        }
+    }
 
     fun createNode(): Node {
         // This is a sanity feature do not remove.
         require(!useTestClock || devMode) { "Cannot use test clock outside of dev mode" }
 
         val advertisedServices = extraAdvertisedServiceIds
-                .split(",")
                 .filter(String::isNotBlank)
                 .map { ServiceInfo.parse(it) }
                 .toMutableSet()
@@ -90,5 +102,3 @@ class FullNodeConfiguration(override val baseDirectory: Path, val config: Config
         return Node(this, advertisedServices, if (useTestClock) TestClock() else NodeClock())
     }
 }
-
-private fun Config.getOptionalConfig(path: String): Config? = if (hasPath(path)) getConfig(path) else null

@@ -351,7 +351,7 @@ open class DriverDSL(
                 "myLegalName" to name,
                 "artemisAddress" to messagingAddress.toString(),
                 "webAddress" to apiAddress.toString(),
-                "extraAdvertisedServiceIds" to advertisedServices.joinToString(","),
+                "extraAdvertisedServiceIds" to advertisedServices.map { it.toString() },
                 "networkMapService" to mapOf(
                         "address" to networkMapAddress.toString(),
                         "legalName" to networkMapLegalName
@@ -429,7 +429,7 @@ open class DriverDSL(
                         "myLegalName" to networkMapLegalName,
                         "artemisAddress" to networkMapAddress.toString(),
                         "webAddress" to apiAddress.toString(),
-                        "extraAdvertisedServiceIds" to "",
+                        "extraAdvertisedServiceIds" to emptyList<String>(),
                         "useTestClock" to useTestClock
                 )
         )
