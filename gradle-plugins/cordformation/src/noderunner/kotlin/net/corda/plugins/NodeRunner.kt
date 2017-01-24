@@ -20,7 +20,8 @@ class NodeRunner {
 
     data class CordaProcess(val process: Process, val name: String)
 
-    var processes = mutableListOf<CordaProcess>()
+    private var processes = mutableListOf<CordaProcess>()
+    var onProcess: (CordaProcess) -> Unit = {}
 
     fun run() {
         val workingDir = Paths.get(System.getProperty("user.dir")).toFile()
@@ -38,7 +39,6 @@ class NodeRunner {
         }
 
         println("Started ${processes.size} processes")
-        println("Press Ctrl + C to exit")
         while (true) {
             Thread.sleep(500)
         }
@@ -55,22 +55,28 @@ class NodeRunner {
 
     private fun startNode(nodeDir: File) {
         println("Starting node in $nodeDir")
-        processes.add(CordaProcess(execCordaJar(nodeDir), "${nodeDir.toPath().fileName}"))
+        registerProcess(CordaProcess(execCordaJar(nodeDir), "${nodeDir.toPath().fileName}"))
     }
 
     private fun startWebServer(webserverDir: File) {
         println("Starting webserver in $webserverDir")
-        processes.add(CordaProcess(execCordaJar(webserverDir, listOf("--webserver")), "${webserverDir.toPath().fileName}-web"))
+        registerProcess(CordaProcess(execCordaJar(webserverDir, listOf("--webserver")), "${webserverDir.toPath().fileName}-web"))
     }
 
     private fun execCordaJar(dir: File, args: List<String> = listOf()): Process {
         val separator = System.getProperty("file.separator")
         val path = System.getProperty("java.home") + separator + "bin" + separator + "java"
         val builder = ProcessBuilder(listOf(path, "-jar", jarName) + args)
-        builder.redirectError(Paths.get("error.${dir.toPath().fileName}.log").toFile())
-        builder.inheritIO()
+        // TODO: Switch on if headless
+        //builder.redirectError(Paths.get("error.${dir.toPath().fileName}.log").toFile())
+        //builder.inheritIO()
         builder.directory(dir)
         return builder.start()
+    }
+
+    private fun registerProcess(process: CordaProcess) {
+        processes.add(process)
+        onProcess(process)
     }
 
     private fun shutdown() {

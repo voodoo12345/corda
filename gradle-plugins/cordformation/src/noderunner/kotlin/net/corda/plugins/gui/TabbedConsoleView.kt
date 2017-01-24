@@ -15,7 +15,18 @@ class TabbedConsoleView : View() {
         tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
     }
 
-    fun attachConsole(cordaProc: NodeRunner.CordaProcess) {
-        root.tab(cordaProc.name) { this += ConsoleView() }
+    init {
+        title = "Corda Node Viewer"
+    }
+
+    fun registerNodeRunner(nodeRunner: NodeRunner) {
+        nodeRunner.onProcess = { attachConsole(it) }
+    }
+
+    private fun attachConsole(cordaProc: NodeRunner.CordaProcess) {
+        root.tab(cordaProc.name) {
+            val view = ConsoleView(cordaProc)
+            this += view
+        }
     }
 }

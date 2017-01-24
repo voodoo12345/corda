@@ -456,7 +456,6 @@ open class DriverDSL(
     }
 
     private fun startNetworkMapService(): ListenableFuture<Process> {
-        val apiAddress = portAllocation.nextHostAndPort()
         val debugPort = if (isDebug) debugPortAllocation.nextPort() else null
 
         val baseDirectory = driverDirectory / networkMapLegalName
