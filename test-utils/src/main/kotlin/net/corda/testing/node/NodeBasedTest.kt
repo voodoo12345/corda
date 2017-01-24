@@ -121,7 +121,7 @@ abstract class NodeBasedTest {
                 configOverrides = mapOf(
                         "myLegalName" to legalName,
                         "artemisAddress" to freeLocalHostAndPort().toString(),
-                        "extraAdvertisedServiceIds" to advertisedServices.joinToString(","),
+                        "extraAdvertisedServiceIds" to advertisedServices,
                         "rpcUsers" to rpcUsers.map {
                             mapOf(
                                     "user" to it.username,
