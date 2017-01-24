@@ -2,17 +2,22 @@ package net.corda.plugins
 
 import javafx.application.Application
 import net.corda.plugins.gui.NodeRunnerApp
+import java.awt.GraphicsEnvironment
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Paths
 
-// TODO: Handle headless mode again
+
 fun main(args: Array<String>) {
-    Application.launch(NodeRunnerApp::class.java)
-    //NodeRunner().run()
+    // TODO: Use an args parser with help options.
+    if(GraphicsEnvironment.isHeadless() || (!args.isEmpty() && (args[0] == "--headless"))) {
+        NodeRunner(true).run()
+    } else {
+        Application.launch(NodeRunnerApp::class.java)
+    }
 }
 
-class NodeRunner {
+class NodeRunner(val isHeadless: Boolean = false) {
     private companion object {
         val jarName = "corda.jar"
         val nodeConfName = "node.conf"
@@ -70,9 +75,10 @@ class NodeRunner {
         val separator = System.getProperty("file.separator")
         val path = System.getProperty("java.home") + separator + "bin" + separator + "java"
         val builder = ProcessBuilder(listOf(path, "-Dname=$nodeName", "-jar", jarName) + args)
-        // TODO: Switch on if headless
-        //builder.redirectError(Paths.get("error.${dir.toPath().fileName}.log").toFile())
-        //builder.inheritIO()
+        if(isHeadless) {
+            builder.redirectError(Paths.get("error.${dir.toPath().fileName}.log").toFile())
+            builder.inheritIO()
+        }
         builder.directory(dir)
         return builder.start()
     }

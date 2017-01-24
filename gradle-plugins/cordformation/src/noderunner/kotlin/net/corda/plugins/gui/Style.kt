@@ -17,7 +17,6 @@ class Style : Stylesheet() {
 
     init {
         scrollPane {
-            fontFamily = "Monospaced"
             backgroundColor += softWhite
             `-fxBackground`.value = softWhiteStr
         }
@@ -35,6 +34,7 @@ class Style : Stylesheet() {
         }
 
         textArea {
+            fontFamily = "Monospaced"
             padding = box(10.px, 10.px)
             fitToHeight = true
             backgroundColor += transparent
