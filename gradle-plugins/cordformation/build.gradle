@@ -41,6 +41,7 @@ dependencies {
 
     noderunner "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     noderunner 'no.tornado:tornadofx:1.6.0'
+    noderunner 'co.paralleluniverse:capsule:1.0.3'
 
     // TypeSafe Config: for simple and human friendly config files.
     // TODO: Add a common versions file between Corda and gradle plugins to de-duplicate this version number

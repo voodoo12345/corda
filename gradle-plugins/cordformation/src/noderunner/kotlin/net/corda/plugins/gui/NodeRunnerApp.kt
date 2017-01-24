@@ -1,5 +1,6 @@
 package net.corda.plugins.gui
 
+import javafx.application.Platform
 import javafx.scene.Scene
 import javafx.scene.control.Tab
 import net.corda.plugins.NodeRunner
@@ -17,5 +18,10 @@ class NodeRunnerApp : App(TabbedConsoleView::class, Style::class) {
         }
 
         return Scene(view.root, 1024.0, 768.0)
+    }
+
+    override fun stop() {
+        nodeRunner.shutdown()
+        super.stop()
     }
 }

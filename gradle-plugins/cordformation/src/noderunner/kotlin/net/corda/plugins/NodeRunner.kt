@@ -22,6 +22,7 @@ class NodeRunner {
 
     private var processes = mutableListOf<CordaProcess>()
     var onProcess: (CordaProcess) -> Unit = {}
+    private var alive = true
 
     fun run() {
         val workingDir = Paths.get(System.getProperty("user.dir")).toFile()
@@ -39,9 +40,10 @@ class NodeRunner {
         }
 
         println("Started ${processes.size} processes")
-        while (true) {
+        while (alive) {
             Thread.sleep(500)
         }
+        println("Node runner exited")
     }
 
     private fun isNode(maybeNodeDir: File) = maybeNodeDir.isDirectory
@@ -64,9 +66,10 @@ class NodeRunner {
     }
 
     private fun execCordaJar(dir: File, args: List<String> = listOf()): Process {
+        val nodeName = dir.toPath().fileName
         val separator = System.getProperty("file.separator")
         val path = System.getProperty("java.home") + separator + "bin" + separator + "java"
-        val builder = ProcessBuilder(listOf(path, "-jar", jarName) + args)
+        val builder = ProcessBuilder(listOf(path, "-Dname=$nodeName", "-jar", jarName) + args)
         // TODO: Switch on if headless
         //builder.redirectError(Paths.get("error.${dir.toPath().fileName}.log").toFile())
         //builder.inheritIO()
@@ -79,9 +82,19 @@ class NodeRunner {
         onProcess(process)
     }
 
-    private fun shutdown() {
-        processes.forEach { it.process.destroy() }
-        Thread.sleep(5000)
-        processes.forEach { it.process.destroyForcibly() }
+    fun shutdown() {
+        println("Shutting down")
+        if(alive) {
+            println("Stopping all processes")
+            processes.forEach { it.process.destroy() }
+            try {
+                println("Awaiting all processes to exit")
+                processes.forEach { it.process.waitFor() }
+            } catch (e: InterruptedException) {
+                println("Forcefully killing all processes")
+                processes.forEach { it.process.destroyForcibly() }
+            }
+            alive = false
+        }
     }
 }

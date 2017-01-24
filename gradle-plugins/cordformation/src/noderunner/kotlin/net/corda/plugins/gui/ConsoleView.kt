@@ -20,6 +20,12 @@ class ConsoleView(val process: NodeRunner.CordaProcess) : View() {
             while (process.process.isAlive) {
                 readLineFrom(process.process.inputStream)
                 readLineFrom(process.process.errorStream)
+
+                Thread.sleep(10)
+            }
+
+            Platform.runLater {
+                root.text += "Node exited with exit code ${process.process.exitValue()}"
             }
         }
     }
