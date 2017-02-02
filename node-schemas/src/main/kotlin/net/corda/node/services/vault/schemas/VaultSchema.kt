@@ -2,6 +2,7 @@ package net.corda.node.services.vault.schemas
 
 import io.requery.*
 import net.corda.core.node.services.Vault
+import net.corda.core.schemas.requery.Requery
 import net.corda.core.schemas.requery.converters.InstantConverter
 import java.time.Instant
 import java.util.*
@@ -39,8 +40,12 @@ object VaultSchema {
     @Entity(model = "vault")
     interface VaultStates : Requery.PersistentState {
 
+        // refers to the notary a state is attached to
         @get:Column(name = "notary_name")
         var notaryName: String
+
+        @get:Column(name = "notary_key")
+        var notaryKey: String
 
         // references a concrete ContractState that is [QueryableState] and has a [MappedSchema]
         @get:Column(name = "contract_state_class_name")
@@ -50,6 +55,7 @@ object VaultSchema {
         @get:Column(name = "contract_state", length = 10000 )
         var contractState: ByteArray
 
+        // state lifecycle: committed (not yet notarised), notarised (unconsumed), consumed
         @get:Column(name = "state_status")
         var stateStatus: Vault.StateStatus
 
@@ -68,8 +74,14 @@ object VaultSchema {
         @get:Convert(InstantConverter::class)
         var consumed: Instant
 
+        // used by denote a state has been soft locked (to prevent double spend)
         @get:Column(name = "lock_id", nullable = true)
         var lockId: String
+
+        // refers to the last time a lock was taken (reserved) or updated (released, re-reserved)
+        @get:Column(name = "lock_timestamp")
+        @get:Convert(InstantConverter::class)
+        var lockUpdateTime: Instant
     }
 
     @Table(name = "vault_consumed_fungible_states")
@@ -77,7 +89,6 @@ object VaultSchema {
     interface VaultFungibleState : Requery.PersistentState {
 
         // TODO: 1:1 and 1:m uni-directional relationship mapping code generation not working in Requery
-
 //        @get:OneToMany(mappedBy = "key")
 //        var participants: List<VaultKey>
 
@@ -107,7 +118,6 @@ object VaultSchema {
     interface VaultLinearState : Requery.PersistentState {
 
         // TODO: 1:1 and 1:m uni-directional relationship mapping code generation not working in Requery
-
 //        @get:OneToMany(mappedBy = "key")
 //        var participants: List<VaultKey>
 
@@ -128,7 +138,9 @@ object VaultSchema {
     }
 
     @Table(name = "vault_keys")
-//    @Entity(model = "vault")
+    // TODO: unused until the 1:1 and 1:m uni-directional relationship mapping code generation is fixed in Requery
+    //       see https://github.com/requery/requery/issues/328
+    //    @Entity(model = "vault")
     interface VaultKey : Persistable {
         @get:Key
         @get:Generated
@@ -141,6 +153,8 @@ object VaultSchema {
     }
 
     @Table(name = "vault_parties")
+    // TODO: unused until the 1:1 and 1:m uni-directional relationship mapping code generation is fixed in Requery
+    //       see https://github.com/requery/requery/issues/328
 //    @Entity(model = "vault")
     interface VaultParty : Persistable {
         @get:Key

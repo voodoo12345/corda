@@ -1,8 +1,9 @@
-package net.corda.node.services.vault.schemas
+package net.corda.core.schemas.requery
 
 import io.requery.Key
 import io.requery.Persistable
 import io.requery.Superclass
+import net.corda.core.contracts.StateRef
 
 import javax.persistence.Column
 

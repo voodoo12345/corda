@@ -10,7 +10,6 @@ import net.corda.core.toFuture
 import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.transactions.WireTransaction
 import rx.Observable
-import java.io.File
 import java.io.InputStream
 import java.security.KeyPair
 import java.security.PrivateKey
@@ -130,6 +129,10 @@ interface VaultService {
      */
     fun track(): Pair<Vault, Observable<Vault.Update>>
 
+    /**
+     * return unconsumed [ContractState]'s for a given set of [StateRef]'s
+     * TODO: revisit and generalize this exposed API function.
+     */
     fun statesForRefs(refs: List<StateRef>): Map<StateRef, TransactionState<*>?>
 
     /**

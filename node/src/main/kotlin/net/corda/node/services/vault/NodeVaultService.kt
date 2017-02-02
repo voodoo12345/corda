@@ -1,7 +1,6 @@
 package net.corda.node.services.vault
 
 import com.google.common.collect.Sets
-import com.r3corda.node.services.database.RequeryConfiguration
 import io.requery.TransactionIsolation
 import io.requery.kotlin.`in`
 import io.requery.kotlin.eq
@@ -16,19 +15,22 @@ import net.corda.core.node.ServiceHub
 import net.corda.core.node.services.Vault
 import net.corda.core.node.services.VaultService
 import net.corda.core.node.services.unconsumedStates
-import net.corda.core.serialization.*
+import net.corda.core.serialization.SingletonSerializeAsToken
+import net.corda.core.serialization.createKryo
+import net.corda.core.serialization.deserialize
+import net.corda.core.serialization.serialize
 import net.corda.core.tee
 import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.transactions.WireTransaction
 import net.corda.core.utilities.loggerFor
 import net.corda.core.utilities.trace
+import net.corda.node.services.database.RequeryConfiguration
 import net.corda.node.services.vault.schemas.*
 import net.corda.node.utilities.bufferUntilDatabaseCommit
 import net.corda.node.utilities.wrapWithDatabaseTransaction
 import rx.Observable
 import rx.subjects.PublishSubject
 import java.security.PublicKey
-import java.time.Instant
 import java.util.*
 
 /**
@@ -74,9 +76,11 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                         state.index = it.key.index
                         state.stateStatus = Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED
                         state.contractStateClassName = it.value.state.data.javaClass.name
+                        // TODO: revisit Kryo bug when using THREAD_LOCAL_KYRO
                         state.contractState = it.value.state.serialize(createKryo()).bytes
                         state.notaryName = it.value.state.notary.name
-                        state.notarised = Instant.now()
+                        state.notaryKey = it.value.state.notary.owningKey.toBase58String()
+                        state.notarised = services.clock.instant()
                         insert(state)
                     }
                     consumedStateRefs.forEach { stateRef ->
@@ -86,7 +90,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                         val state = findByKey(VaultStatesEntity::class, key)
                         state?.let {
                             state.stateStatus = Vault.StateStatus.CONSENSUS_AGREED_CONSUMED
-                            state.consumed = Instant.now()
+                            state.consumed = services.clock.instant()
                             update(state)
                         }
                     }
@@ -158,6 +162,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                 result.get()
                         .map { it ->
                             val stateRef = StateRef(SecureHash.parse(it.txId), it.index)
+                            // TODO: revisit Kryo bug when using THREAD_LOCAL_KYRO
                             val state = it.contractState.deserialize<TransactionState<T>>(createKryo())
                             StateAndRef(state, stateRef)
                         }.toList()

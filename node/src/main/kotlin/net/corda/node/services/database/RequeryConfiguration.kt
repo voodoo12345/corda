@@ -1,7 +1,6 @@
-package com.r3corda.node.services.database
+package net.corda.node.services.database
 
 import com.zaxxer.hikari.HikariConfig
-
 import com.zaxxer.hikari.HikariDataSource
 import io.requery.Persistable
 import io.requery.meta.EntityModel
@@ -9,7 +8,6 @@ import io.requery.sql.KotlinConfiguration
 import io.requery.sql.KotlinEntityDataStore
 import io.requery.sql.SchemaModifier
 import io.requery.sql.TableCreationMode
-import net.corda.core.crypto.SecureHash
 import net.corda.core.utilities.loggerFor
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
@@ -42,7 +40,7 @@ class RequeryConfiguration(val properties: Properties) {
         val tables = SchemaModifier(configuration)
         val mode = TableCreationMode.CREATE_NOT_EXISTS
         tables.createTables(mode)
-        return KotlinEntityDataStore<Persistable>(configuration)
+        return KotlinEntityDataStore(configuration)
     }
 }
 
