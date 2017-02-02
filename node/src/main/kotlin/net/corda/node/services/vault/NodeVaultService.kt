@@ -74,13 +74,13 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                         val state = VaultStatesEntity()
                         state.txId = it.key.txhash.toString()
                         state.index = it.key.index
-                        state.stateStatus = Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED
+                        state.stateStatus = Vault.StateStatus.UNCONSUMED
                         state.contractStateClassName = it.value.state.data.javaClass.name
                         // TODO: revisit Kryo bug when using THREAD_LOCAL_KYRO
                         state.contractState = it.value.state.serialize(createKryo()).bytes
                         state.notaryName = it.value.state.notary.name
                         state.notaryKey = it.value.state.notary.owningKey.toBase58String()
-                        state.notarised = services.clock.instant()
+                        state.recordedTime = services.clock.instant()
                         insert(state)
                     }
                     consumedStateRefs.forEach { stateRef ->
@@ -89,8 +89,8 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                         val key = io.requery.proxy.CompositeKey(keys)
                         val state = findByKey(VaultStatesEntity::class, key)
                         state?.let {
-                            state.stateStatus = Vault.StateStatus.CONSENSUS_AGREED_CONSUMED
-                            state.consumed = services.clock.instant()
+                            state.stateStatus = Vault.StateStatus.CONSUMED
+                            state.consumedTime = services.clock.instant()
                             update(state)
                         }
                     }
@@ -176,7 +176,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                     var results: List<StateAndRef<*>> = emptyList()
                     refs.forEach {
                         val result = select(VaultSchema.VaultStates::class)
-                                .where(VaultSchema.VaultStates::stateStatus eq Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED)
+                                .where(VaultSchema.VaultStates::stateStatus eq Vault.StateStatus.UNCONSUMED)
                                 .and(VaultSchema.VaultStates::txId eq it.txhash.toString())
                                 .and(VaultSchema.VaultStates::index eq it.index)
                         result.get()?.each {
@@ -358,7 +358,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                 // i.e. retainAll() iterates over consumed, checking contains() on the parameter.  Sets.union() does not physically create
                 // a new collection and instead contains() just checks the contains() of both parameters, and so we don't end up
                 // iterating over all (a potentially very large) unconsumedStates at any point.
-                val unconsumedStates = states(stateType, setOf(Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED))
+                val unconsumedStates = states(stateType, setOf(Vault.StateStatus.UNCONSUMED))
                 consumedRefs.retainAll(Sets.union(netDelta.produced.map { it.ref }.toSet(), unconsumedStates.map { it.ref }.toSet()))
                 consumedRefs.mapNotNull {
                     val state = unconsumedStates.associateBy { it.ref } [StateRef(it.txhash, it.index)]

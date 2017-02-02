@@ -155,11 +155,11 @@ class VaultSchemaTest {
             val state = findByKey(VaultStatesEntity::class, key)
             assertNotNull(state)
             state?.let {
-                state.stateStatus = Vault.StateStatus.CONSENSUS_AGREED_CONSUMED
-                state.consumed = Instant.now()
+                state.stateStatus = Vault.StateStatus.CONSUMED
+                state.consumedTime = Instant.now()
                 update(state)
                 val result = select(VaultSchema.VaultStates::class) where (VaultSchema.VaultStates::txId eq state.txId)
-                assertEquals(Vault.StateStatus.CONSENSUS_AGREED_CONSUMED, result().first().stateStatus)
+                assertEquals(Vault.StateStatus.CONSUMED, result().first().stateStatus)
             }
         }
     }
@@ -206,12 +206,12 @@ class VaultSchemaTest {
         val stateEntity = VaultStatesEntity()
         stateEntity.txId = stateRef.txhash.toString()
         stateEntity.index = stateRef.index
-        stateEntity.stateStatus = Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED
+        stateEntity.stateStatus = Vault.StateStatus.UNCONSUMED
         stateEntity.contractStateClassName = state.data.javaClass.name
         stateEntity.contractState = state.serialize().bytes
         stateEntity.notaryName = state.notary.name
         stateEntity.notaryKey = state.notary.owningKey.toBase58String()
-        stateEntity.notarised = Instant.now()
+        stateEntity.recordedTime = Instant.now()
         return stateEntity
     }
 
@@ -395,7 +395,7 @@ class VaultSchemaTest {
         val stateAndRefs =
             data.invoke {
                 val result = select(VaultSchema.VaultStates::class)
-                        .where(VaultSchema.VaultStates::stateStatus eq Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED)
+                        .where(VaultSchema.VaultStates::stateStatus eq Vault.StateStatus.UNCONSUMED)
                 result.get()
                         .map { it ->
                             val stateRef = StateRef(SecureHash.parse(it.txId), it.index)

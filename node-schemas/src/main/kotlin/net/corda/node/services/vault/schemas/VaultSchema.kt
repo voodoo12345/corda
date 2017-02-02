@@ -12,7 +12,6 @@ object VaultSchema {
     @Table(name = "vault_transaction_notes")
     @Entity(model = "vault")
     interface VaultTxnNote : Persistable {
-
         @get:Key
         @get:Generated
         @get:Column(name = "seq_no", index = true)
@@ -55,24 +54,19 @@ object VaultSchema {
         @get:Column(name = "contract_state", length = 10000 )
         var contractState: ByteArray
 
-        // state lifecycle: committed (not yet notarised), notarised (unconsumed), consumed
+        // state lifecycle: unconsumed, consumed
         @get:Column(name = "state_status")
         var stateStatus: Vault.StateStatus
 
-        // refers to timestamp recorded upon entering AWAITING_CONSENSUS state
-        @get:Column(name = "committed")
+        // refers to timestamp recorded upon entering UNCONSUMED state
+        @get:Column(name = "recorded_timestamp")
         @get:Convert(InstantConverter::class)
-        var committed: Instant
+        var recordedTime: Instant
 
-        // refers to timestamp recorded upon entering CONSENSUS_AGREED_UNCONSUMED state
-        @get:Column(name = "notarised")
+        // refers to timestamp recorded upon entering CONSUMED state
+        @get:Column(name = "consumed_timestamp")
         @get:Convert(InstantConverter::class)
-        var notarised: Instant
-
-        // refers to timestamp recorded upon entering CONSENSUS_AGREED_CONSUMED state
-        @get:Column(name = "consumed")
-        @get:Convert(InstantConverter::class)
-        var consumed: Instant
+        var consumedTime: Instant
 
         // used by denote a state has been soft locked (to prevent double spend)
         @get:Column(name = "lock_id", nullable = true)

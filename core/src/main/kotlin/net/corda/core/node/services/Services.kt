@@ -86,7 +86,7 @@ class Vault(val states: Iterable<StateAndRef<ContractState>>) {
     }
 
     enum class StateStatus {
-        AWAITING_CONSENSUS, CONSENSUS_AGREED_UNCONSUMED, CONSENSUS_AGREED_CONSUMED
+        UNCONSUMED, CONSUMED
     }
 }
 
@@ -181,20 +181,20 @@ interface VaultService {
 }
 
 inline fun <reified T: ContractState> VaultService.unconsumedStates(): List<StateAndRef<T>> =
-        states(T::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED))
+        states(T::class.java, setOf(Vault.StateStatus.UNCONSUMED))
 
 inline fun <reified T: ContractState> VaultService.consumedStates(): List<StateAndRef<T>> =
-        states(T::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_CONSUMED))
+        states(T::class.java, setOf(Vault.StateStatus.CONSUMED))
 
 /** Returns a snapshot of the heads of [LinearState] */
 val VaultService.linearHeads: Map<UniqueIdentifier, StateAndRef<LinearState>>
     get() =
-        states(LinearState::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED))
+        states(LinearState::class.java, setOf(Vault.StateStatus.UNCONSUMED))
                 .associateBy{ it.state.data.linearId }.mapValues { it.value }
 
 /** Returns the [linearState] heads only when the type of the state would be considered an 'instanceof' the given type. */
 inline fun <reified T : LinearState> VaultService.linearHeadsOfType() =
-        states(T::class.java, setOf(Vault.StateStatus.CONSENSUS_AGREED_UNCONSUMED))
+        states(T::class.java, setOf(Vault.StateStatus.UNCONSUMED))
                 .associateBy { it.state.data.linearId }.mapValues { it.value }
 
 inline fun <reified T : DealState> VaultService.dealsWith(party: Party) = linearHeadsOfType<T>().values.filter {
