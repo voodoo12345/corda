@@ -299,62 +299,6 @@ class VaultSchemaTest {
         }
     }
 
-    /**
-     *  Vault Schema: VaultFungibleState
-     */
-    @Test
-    fun testInsertFungibleState() {
-        val fstate = VaultFungibleStateEntity()
-        fstate.txId = "12345"
-        fstate.index = 0
-        fstate.ownerKey = DUMMY_KEY_1.toString()
-
-        // TODO: 1:1 and 1:m uni-directional relationship mapping code generation not working in Requery
-//        fstate.participants = setOf()
-//        val ownerKey = VaultKeyEntity()
-//        ownerKey.id =
-//        ownerKey.key
-//        val issuerKey = VaultKeyEntity()
-//        issuerKey.id =
-//        issuerKey.key =
-//        fstate.exitKeys = setOf()
-
-        fstate.quantity = 250000
-        fstate.ccyCode = "GBP"
-        fstate.issuerKey = DUMMY_NOTARY_KEY.toString()
-        fstate.issuerRef = OpaqueBytes.of(1).bytes
-        data.invoke {
-            insert(fstate)
-            val result = select(VaultSchema.VaultFungibleState::class) where (VaultSchema.VaultFungibleState::txId eq fstate.txId) limit 10
-            Assert.assertSame(fstate, result().first())
-        }
-    }
-
-    /**
-     *  Vault Schema: VaultLinearState
-     */
-    @Test
-    fun testInsertLinearState() {
-        val lstate = VaultLinearStateEntity()
-        lstate.txId = "12345"
-        lstate.index = 0
-
-        // TODO: 1:1 and 1:m uni-directional relationship mapping code generation not working in Requery
-//        lstate.particpants =
-//        lstate.ownerKey =
-//        lstate.dealParties =
-
-        lstate.ownerKey = DUMMY_KEY_1.toString()
-        lstate.externalId = "BOC:12345"
-        lstate.uuid = UUID.randomUUID()
-        lstate.dealRef = "USI:1234567890"
-        data.invoke {
-            insert(lstate)
-            val result = select(VaultSchema.VaultLinearState::class) where (VaultSchema.VaultLinearState::externalId eq lstate.externalId)
-            Assert.assertSame(lstate, result().first())
-        }
-    }
-
     @Test
     fun testAllUnconsumedStates() {
         data.invoke {

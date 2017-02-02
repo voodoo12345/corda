@@ -5,7 +5,6 @@ import net.corda.core.node.services.Vault
 import net.corda.core.schemas.requery.Requery
 import net.corda.core.schemas.requery.converters.InstantConverter
 import java.time.Instant
-import java.util.*
 
 object VaultSchema {
 
@@ -51,7 +50,7 @@ object VaultSchema {
         var contractStateClassName: String
 
         // reference to serialized transaction Contract State
-        @get:Column(name = "contract_state", length = 10000 )
+        @get:Column(name = "contract_state", length = 10000)
         var contractState: ByteArray
 
         // state lifecycle: unconsumed, consumed
@@ -77,90 +76,5 @@ object VaultSchema {
         @get:Convert(InstantConverter::class)
         var lockUpdateTime: Instant
     }
-
-    @Table(name = "vault_consumed_fungible_states")
-    @Entity(model = "vault")
-    interface VaultFungibleState : Requery.PersistentState {
-
-        // TODO: 1:1 and 1:m uni-directional relationship mapping code generation not working in Requery
-//        @get:OneToMany(mappedBy = "key")
-//        var participants: List<VaultKey>
-
-//        @get:OneToOne(mappedBy = "key")
-//        var ownerKey: VaultKey
-        @get:Column(name = "owner_key")
-        var ownerKey: String
-
-        @get:Column(name = "quantity")
-        var quantity: Long
-        @get:Column(name = "currency", length = 3 )
-        var ccyCode: String
-
-//        @get:OneToOne(mappedBy = "key")
-//        var issuerKey: VaultKey
-        @get:Column(name = "issuer_key")
-        var issuerKey: String
-        @get:Column(name = "issuer_reference", length = 3 )
-        var issuerRef: ByteArray
-
-//        @get:OneToMany(mappedBy = "key")
-//        var exitKeys: List<VaultKey>
-    }
-
-    @Table(name = "vault_consumed_linear_states")
-    @Entity(model = "vault")
-    interface VaultLinearState : Requery.PersistentState {
-
-        // TODO: 1:1 and 1:m uni-directional relationship mapping code generation not working in Requery
-//        @get:OneToMany(mappedBy = "key")
-//        var participants: List<VaultKey>
-
-//        @get:OneToOne(mappedBy = "key")
-//        var ownerKey: VaultKey
-        @get:Column(name = "owner_key")
-        var ownerKey: String
-
-        @get:Index("externalId_index")
-        var externalId: String
-        @get:Column(length = 36, unique = true, nullable = false)
-        var uuid: UUID
-
-        var dealRef: String
-
-//        @get:OneToMany(mappedBy = "name")
-//        var dealParties: List<VaultParty>
-    }
-
-    @Table(name = "vault_keys")
-    // TODO: unused until the 1:1 and 1:m uni-directional relationship mapping code generation is fixed in Requery
-    //       see https://github.com/requery/requery/issues/328
-    //    @Entity(model = "vault")
-    interface VaultKey : Persistable {
-        @get:Key
-        @get:Generated
-        var id: Int
-
-        @get:Key
-        @get:Column(length = 255)
-        @get:ForeignKey
-        var key: String
-    }
-
-    @Table(name = "vault_parties")
-    // TODO: unused until the 1:1 and 1:m uni-directional relationship mapping code generation is fixed in Requery
-    //       see https://github.com/requery/requery/issues/328
-//    @Entity(model = "vault")
-    interface VaultParty : Persistable {
-        @get:Key
-        @get:Generated
-        var id: Int
-
-        @get:ForeignKey
-        @get:Key
-        var name: String
-        @get:ForeignKey
-        @get:Key
-        @get:Column(length = 255)
-        var key: String
-    }
 }
+
