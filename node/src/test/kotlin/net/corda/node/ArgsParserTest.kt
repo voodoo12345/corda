@@ -17,8 +17,7 @@ class ArgsParserTest {
                 baseDirectory = workingDirectory,
                 configFile = workingDirectory / "node.conf",
                 help = false,
-                logToConsole = false,
-                isWebserver = false))
+                logToConsole = false))
     }
 
     @Test
@@ -29,8 +28,7 @@ class ArgsParserTest {
                 baseDirectory = expectedBaseDir,
                 configFile = expectedBaseDir / "node.conf",
                 help = false,
-                logToConsole = false,
-                isWebserver = false))
+                logToConsole = false))
     }
 
     @Test
@@ -41,8 +39,7 @@ class ArgsParserTest {
                 baseDirectory = baseDirectory,
                 configFile = baseDirectory / "node.conf",
                 help = false,
-                logToConsole = false,
-                isWebserver = false))
+                logToConsole = false))
     }
 
     @Test
@@ -52,8 +49,7 @@ class ArgsParserTest {
                 baseDirectory = workingDirectory,
                 configFile = workingDirectory / "different.conf",
                 help = false,
-                logToConsole = false,
-                isWebserver = false))
+                logToConsole = false))
     }
 
     @Test
@@ -64,19 +60,7 @@ class ArgsParserTest {
                 baseDirectory = workingDirectory,
                 configFile = configFile,
                 help = false,
-                logToConsole = false,
-                isWebserver = false))
-    }
-
-    @Test
-    fun `just webserver `() {
-        val cmdLineOptions = parser.parse("--webserver")
-        assertThat(cmdLineOptions).isEqualTo(CmdLineOptions(
-                baseDirectory = workingDirectory,
-                configFile =  workingDirectory / "node.conf",
-                help = false,
-                logToConsole = false,
-                isWebserver = true))
+                logToConsole = false))
     }
 
     @Test
