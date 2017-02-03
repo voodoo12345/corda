@@ -12,7 +12,7 @@ import net.corda.core.utilities.loggerFor
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
-class RequeryConfiguration(val properties: Properties) {
+class RequeryConfiguration(val properties: Properties, val useDefaultLogging: Boolean = false) {
 
     companion object {
         val logger = loggerFor<RequeryConfiguration>()
@@ -36,11 +36,11 @@ class RequeryConfiguration(val properties: Properties) {
     }
 
     fun makeSessionFactoryForModel(model: EntityModel): KotlinEntityDataStore<Persistable> {
-        val configTables = KotlinConfiguration(model, dataSource, useDefaultLogging = true)
+        val configTables = KotlinConfiguration(model, dataSource, useDefaultLogging = this.useDefaultLogging)
         val tables = SchemaModifier(configTables)
         val mode = TableCreationMode.CREATE_NOT_EXISTS
         tables.createTables(mode)
-        val configuration = KotlinConfigurationTransactionWrapper(model, dataSource, useDefaultLogging = true)
+        val configuration = KotlinConfigurationTransactionWrapper(model, dataSource, useDefaultLogging = this.useDefaultLogging)
         return KotlinEntityDataStore(configuration)
     }
 }

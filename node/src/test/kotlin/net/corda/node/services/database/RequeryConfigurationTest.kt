@@ -145,7 +145,7 @@ class RequeryConfigurationTest {
     }
 
     private fun newRequeryStorage(dataSourceProperties: Properties) {
-        val configuration = RequeryConfiguration(dataSourceProperties)
+        val configuration = RequeryConfiguration(dataSourceProperties, true)
         requerySession = configuration.sessionForModel(Models.VAULT)
     }
 
