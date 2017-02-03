@@ -63,18 +63,18 @@ object VaultSchema {
         var recordedTime: Instant
 
         // refers to timestamp recorded upon entering CONSUMED state
-        @get:Column(name = "consumed_timestamp")
+        @get:Column(name = "consumed_timestamp", nullable = true)
         @get:Convert(InstantConverter::class)
-        var consumedTime: Instant
+        var consumedTime: Instant?
 
         // used by denote a state has been soft locked (to prevent double spend)
         @get:Column(name = "lock_id", nullable = true)
-        var lockId: String
+        var lockId: String?
 
         // refers to the last time a lock was taken (reserved) or updated (released, re-reserved)
-        @get:Column(name = "lock_timestamp")
+        @get:Column(name = "lock_timestamp", nullable = true)
         @get:Convert(InstantConverter::class)
-        var lockUpdateTime: Instant
+        var lockUpdateTime: Instant?
     }
 }
 
