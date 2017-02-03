@@ -12,7 +12,6 @@ import net.corda.flows.CashCommand
 import net.corda.flows.CashFlow
 import net.corda.node.internal.Node
 import net.corda.node.services.User
-import net.corda.node.services.config.configureTestSSL
 import net.corda.node.services.messaging.CordaRPCClient
 import net.corda.node.services.startFlowPermission
 import net.corda.node.services.transactions.ValidatingNotaryService
@@ -29,8 +28,12 @@ class CordaRPCClientTest : NodeBasedTest() {
 
     @Before
     fun setUp() {
-        node = startNode("Alice", rpcUsers = listOf(rpcUser), advertisedServices = setOf(ServiceInfo(ValidatingNotaryService.type))).getOrThrow()
-        client = CordaRPCClient(node.configuration.artemisAddress, configureTestSSL())
+        node = startNode(
+                "Alice",
+                rpcUsers = listOf(rpcUser),
+                advertisedServices = setOf(ServiceInfo(ValidatingNotaryService.type))
+        ).getOrThrow()
+        client = rpcClientTo(node)
     }
 
     @Test

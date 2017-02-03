@@ -1,14 +1,52 @@
 package net.corda.core
 
 import org.assertj.core.api.Assertions.*
+import org.junit.After
 import org.junit.Test
 import rx.subjects.PublishSubject
 import java.util.*
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
 
 class UtilsTest {
+    private val executor = Executors.newSingleThreadExecutor()
+
+    @After
+    fun cleanUp() {
+        executor.shutdownNow()
+    }
+
     @Test
-    fun `toFuture - single item observable`() {
+    fun `future - value`() {
+        val f = future { "Hello" }
+        var value: Any? = null
+        f.addListener(Runnable { value = f.get() }, executor)
+        assertThat(f.get()).isEqualTo("Hello")
+//        assertThat(value).isEqualTo("Hello")
+    }
+
+    @Test
+    fun `future - exception`() {
+        val thrownException = Exception()
+        val f = future { throw thrownException }
+        var caughtException: Throwable? = null
+        f.addListener(Runnable {
+            try {
+                f.get()
+            } catch (e: ExecutionException) {
+                caughtException = e.cause
+            }
+        }, executor)
+
+        assertThatThrownBy {
+            f.get()
+        }.hasCause(thrownException)
+        assertThat(caughtException).isSameAs(thrownException)
+    }
+
+    @Test
+    fun `Observable toFuture - single item observable`() {
         val subject = PublishSubject.create<String>()
         val future = subject.toFuture()
         subject.onNext("Hello")
@@ -16,7 +54,7 @@ class UtilsTest {
     }
 
     @Test
-    fun `toFuture - empty obserable`() {
+    fun `Observable toFuture - empty obserable`() {
         val subject = PublishSubject.create<String>()
         val future = subject.toFuture()
         subject.onCompleted()
@@ -26,7 +64,7 @@ class UtilsTest {
     }
 
     @Test
-    fun `toFuture - more than one item observable`() {
+    fun `Observable toFuture - more than one item observable`() {
         val subject = PublishSubject.create<String>()
         val future = subject.toFuture()
         subject.onNext("Hello")
@@ -36,7 +74,7 @@ class UtilsTest {
     }
 
     @Test
-    fun `toFuture - erroring observable`() {
+    fun `Observable toFuture - erroring observable`() {
         val subject = PublishSubject.create<String>()
         val future = subject.toFuture()
         val exception = Exception("Error")
@@ -47,7 +85,7 @@ class UtilsTest {
     }
 
     @Test
-    fun `toFuture - cancel`() {
+    fun `Observable toFuture - cancel`() {
         val subject = PublishSubject.create<String>()
         val future = subject.toFuture()
         future.cancel(false)

@@ -1,12 +1,12 @@
 package net.corda.attachmentdemo
 
 import com.google.common.net.HostAndPort
+import com.google.common.util.concurrent.ListenableFuture
 import joptsimple.OptionParser
+import net.corda.core.*
 import net.corda.core.contracts.TransactionType
 import net.corda.core.crypto.Party
 import net.corda.core.crypto.SecureHash
-import net.corda.core.div
-import net.corda.core.getOrThrow
 import net.corda.core.messaging.CordaRPCOps
 import net.corda.core.messaging.startFlow
 import net.corda.core.utilities.Emoji
@@ -43,14 +43,19 @@ fun main(args: Array<String>) {
             val host = HostAndPort.fromString("localhost:10004")
             println("Connecting to sender node ($host)")
             CordaRPCClient(host, sslConfigFor("nodea", options.valueOf(certsPath))).use("demo", "demo") {
-                sender(this)
+                sender(this).getOrThrow()
             }
         }
         Role.RECIPIENT -> {
             val host = HostAndPort.fromString("localhost:10006")
             println("Connecting to the recipient node ($host)")
             CordaRPCClient(host, sslConfigFor("nodeb", options.valueOf(certsPath))).use("demo", "demo") {
-                recipient(this)
+                try {
+                    val wtx = recipient(this).getOrThrow()
+                    println("File received - we're happy!\n\nFinal transaction is:\n\n${Emoji.renderIfSupported(wtx)}")
+                } catch (e: Exception) {
+                    println("Error: ${e.message}")
+                }
             }
         }
     }
@@ -58,7 +63,7 @@ fun main(args: Array<String>) {
 
 val PROSPECTUS_HASH = SecureHash.parse("decd098666b9657314870e192ced0c3519c2c9d395507a238338f8d003929de9")
 
-fun sender(rpc: CordaRPCOps) {
+fun sender(rpc: CordaRPCOps): ListenableFuture<Unit> {
     // Get the identity key of the other side (the recipient).
     val otherSide: Party = rpc.partyFromName("Bank B")!!
 
@@ -86,20 +91,22 @@ fun sender(rpc: CordaRPCOps) {
     println("Sending ${stx.id}")
     val flowHandle = rpc.startFlow(::FinalityFlow, stx, setOf(otherSide))
     flowHandle.progress.subscribe(::println)
-    flowHandle.returnValue.getOrThrow()
+    return flowHandle.returnValue
 }
 
-fun recipient(rpc: CordaRPCOps) {
+fun recipient(rpc: CordaRPCOps): ListenableFuture<Unit> {
     println("Waiting to receive transaction ...")
-    val stx = rpc.verifiedTransactions().second.toBlocking().first()
-    val wtx = stx.tx
-    if (wtx.attachments.isNotEmpty()) {
-        assertEquals(PROSPECTUS_HASH, wtx.attachments.first())
-        require(rpc.attachmentExists(PROSPECTUS_HASH))
-        println("File received - we're happy!\n\nFinal transaction is:\n\n${Emoji.renderIfSupported(wtx)}")
-    } else {
-        println("Error: no attachments found in ${wtx.id}")
-    }
+    return rpc.verifiedTransactions().second.toFuture()
+            .flatMap { stx ->
+                future {
+                    require(rpc.attachmentExists(PROSPECTUS_HASH)) { "Attachment does not exist" }
+                    stx
+                }
+            }.map { stx ->
+                val wtx = stx.tx
+                require(wtx.attachments.isNotEmpty()) { "No attachments found in ${wtx.id}" }
+                require(wtx.attachments.first() == PROSPECTUS_HASH) { "Attachment does not match: ${wtx.attachments.first()}" }
+            }
 }
 
 private fun printHelp(parser: OptionParser) {
