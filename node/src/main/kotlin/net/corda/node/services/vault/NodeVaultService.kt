@@ -156,9 +156,11 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
     override fun <T: ContractState> states(clazz: Class<T>, statuses: Set<Vault.StateStatus>): List<StateAndRef<T>> {
         val stateAndRefs =
             session.withTransaction(TransactionIsolation.REPEATABLE_READ) {
-                val result = select(VaultSchema.VaultStates::class)
-                        .where((VaultSchema.VaultStates::stateStatus `in` statuses)
-                        and (VaultSchema.VaultStates::contractStateClassName eq clazz.name))
+                var result = select(VaultSchema.VaultStates::class)
+                                .where(VaultSchema.VaultStates::stateStatus `in` statuses)
+                // TODO: temporary fix to continue supporting track() function (until becomes Typed)
+                if (clazz != ContractState::class.java)
+                    result.and (VaultSchema.VaultStates::contractStateClassName eq clazz.name)
                 result.get()
                         .map { it ->
                             val stateRef = StateRef(SecureHash.parse(it.txId), it.index)
