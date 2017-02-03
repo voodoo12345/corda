@@ -36,10 +36,11 @@ class RequeryConfiguration(val properties: Properties) {
     }
 
     fun makeSessionFactoryForModel(model: EntityModel): KotlinEntityDataStore<Persistable> {
-        val configuration = KotlinConfiguration(model, dataSource, useDefaultLogging = true)
-        val tables = SchemaModifier(configuration)
+        val configTables = KotlinConfiguration(model, dataSource, useDefaultLogging = true)
+        val tables = SchemaModifier(configTables)
         val mode = TableCreationMode.CREATE_NOT_EXISTS
         tables.createTables(mode)
+        val configuration = KotlinConfigurationTransactionWrapper(model, dataSource, useDefaultLogging = true)
         return KotlinEntityDataStore(configuration)
     }
 }

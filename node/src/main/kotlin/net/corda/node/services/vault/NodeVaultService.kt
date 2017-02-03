@@ -112,7 +112,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
                     cashBalanceEntity.currency = currency.currencyCode
                     cashBalanceEntity.amount = producedAmount.quantity - consumedAmount.quantity
 
-                    session.invoke {
+                    session.withTransaction(TransactionIsolation.REPEATABLE_READ) {
                         val state = findByKey(VaultCashBalancesEntity::class, currency.currencyCode)
                         state?.let {
                             state.amount += producedAmount.quantity - consumedAmount.quantity
@@ -133,7 +133,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
 
     override val cashBalances: Map<Currency, Amount<Currency>> get() = mutex.locked {
         val cashBalancesByCurrency =
-            session.invoke {
+            session.withTransaction(TransactionIsolation.REPEATABLE_READ) {
                 val balances = select(VaultSchema.VaultCashBalances::class)
                 balances.get().toList()
             }
@@ -155,7 +155,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
 
     override fun <T: ContractState> states(clazz: Class<T>, statuses: Set<Vault.StateStatus>): List<StateAndRef<T>> {
         val stateAndRefs =
-            session.invoke {
+            session.withTransaction(TransactionIsolation.REPEATABLE_READ) {
                 val result = select(VaultSchema.VaultStates::class)
                         .where((VaultSchema.VaultStates::stateStatus `in` statuses)
                         and (VaultSchema.VaultStates::contractStateClassName eq clazz.name))
@@ -172,7 +172,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
 
     override fun statesForRefs(refs: List<StateRef>): Map<StateRef, TransactionState<*>?> {
         val stateAndRefs =
-                session.invoke {
+                session.withTransaction(TransactionIsolation.REPEATABLE_READ) {
                     var results: List<StateAndRef<*>> = emptyList()
                     refs.forEach {
                         val result = select(VaultSchema.VaultStates::class)
@@ -204,7 +204,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
     }
 
     override fun addNoteToTransaction(txnId: SecureHash, noteText: String) {
-        session.invoke {
+        session.withTransaction(TransactionIsolation.REPEATABLE_READ) {
             val txnNoteEntity = VaultTxnNoteEntity()
             txnNoteEntity.txId = txnId.toString()
             txnNoteEntity.note = noteText
@@ -214,7 +214,7 @@ class NodeVaultService(private val services: ServiceHub, dataSourceProperties: P
 
     override fun getTransactionNotes(txnId: SecureHash): Iterable<String> {
         val result =
-            session.invoke {
+            session.withTransaction(TransactionIsolation.REPEATABLE_READ) {
                 val result = select(VaultSchema.VaultTxnNote::class) where (VaultSchema.VaultTxnNote::txId eq txnId.toString())
                 result.let {
                     result.get().asIterable().map { it.note }

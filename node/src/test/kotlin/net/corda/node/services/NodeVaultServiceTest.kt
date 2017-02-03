@@ -32,11 +32,12 @@ import kotlin.test.assertEquals
 class NodeVaultServiceTest {
     lateinit var dataSource: Closeable
     lateinit var database: Database
+    private val dataSourceProps = makeTestDataSourceProperties()
 
     @Before
     fun setUp() {
         LogHelper.setLevel(NodeVaultService::class)
-        val dataSourceAndDatabase = configureDatabase(makeTestDataSourceProperties())
+        val dataSourceAndDatabase = configureDatabase(dataSourceProps)
         dataSource = dataSourceAndDatabase.first
         database = dataSourceAndDatabase.second
     }
@@ -51,7 +52,7 @@ class NodeVaultServiceTest {
     fun `states not local to instance`() {
         databaseTransaction(database) {
             val services1 = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
+                override val vaultService: VaultService = NodeVaultService(this, dataSourceProps)
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {
@@ -90,7 +91,7 @@ class NodeVaultServiceTest {
     fun `states for refs`() {
         databaseTransaction(database) {
             val services1 = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
+                override val vaultService: VaultService = NodeVaultService(this, dataSourceProps)
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {
@@ -114,7 +115,7 @@ class NodeVaultServiceTest {
     fun addNoteToTransaction() {
         databaseTransaction(database) {
             val services = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
+                override val vaultService: VaultService = NodeVaultService(this, dataSourceProps)
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {

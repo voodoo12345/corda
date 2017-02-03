@@ -222,12 +222,13 @@ class CommercialPaperTestsGeneric {
     @Test
     fun `issue move and then redeem`() {
 
-        val dataSourceAndDatabaseAlice = configureDatabase(makeTestDataSourceProperties())
+        val dataSourcePropsAlice = makeTestDataSourceProperties()
+        val dataSourceAndDatabaseAlice = configureDatabase(dataSourcePropsAlice)
         val databaseAlice = dataSourceAndDatabaseAlice.second
         databaseTransaction(databaseAlice) {
 
             aliceServices = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
+                override val vaultService: VaultService = NodeVaultService(this, dataSourcePropsAlice)
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {
@@ -241,12 +242,13 @@ class CommercialPaperTestsGeneric {
             aliceVaultService = aliceServices.vaultService
         }
 
-        val dataSourceAndDatabaseBigCorp = configureDatabase(makeTestDataSourceProperties())
+        val dataSourcePropsBigCorp = makeTestDataSourceProperties()
+        val dataSourceAndDatabaseBigCorp = configureDatabase(dataSourcePropsBigCorp)
         val databaseBigCorp = dataSourceAndDatabaseBigCorp.second
         databaseTransaction(databaseBigCorp) {
 
             bigCorpServices = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
+                override val vaultService: VaultService = NodeVaultService(this, dataSourcePropsBigCorp)
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {

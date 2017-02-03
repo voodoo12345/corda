@@ -38,13 +38,14 @@ class VaultWithCashTest {
 
     @Before
     fun setUp() {
-        LogHelper.setLevel(NodeVaultService::class)
-        val dataSourceAndDatabase = configureDatabase(makeTestDataSourceProperties())
+        LogHelper.setLevel(VaultWithCashTest::class)
+        val dataSourceProps = makeTestDataSourceProperties()
+        val dataSourceAndDatabase = configureDatabase(dataSourceProps)
         dataSource = dataSourceAndDatabase.first
         database = dataSourceAndDatabase.second
         databaseTransaction(database) {
             services = object : MockServices() {
-                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
+                override val vaultService: VaultService = NodeVaultService(this, dataSourceProps)
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {
@@ -59,7 +60,7 @@ class VaultWithCashTest {
 
     @After
     fun tearDown() {
-        LogHelper.reset(NodeVaultService::class)
+        LogHelper.reset(VaultWithCashTest::class)
         dataSource.close()
     }
 

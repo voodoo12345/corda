@@ -51,13 +51,14 @@ class CashTests {
     @Before
     fun setUp() {
         LogHelper.setLevel(NodeVaultService::class)
-        val dataSourceAndDatabase = configureDatabase(makeTestDataSourceProperties())
+        val dataSourceProps = makeTestDataSourceProperties()
+        val dataSourceAndDatabase = configureDatabase(dataSourceProps)
         dataSource = dataSourceAndDatabase.first
         database = dataSourceAndDatabase.second
         databaseTransaction(database) {
             services = object : MockServices() {
                 override val keyManagementService: MockKeyManagementService = MockKeyManagementService(MINI_CORP_KEY, MEGA_CORP_KEY, OUR_KEY)
-                override val vaultService: VaultService = NodeVaultService(this, makeTestDataSourceProperties())
+                override val vaultService: VaultService = NodeVaultService(this, dataSourceProps)
 
                 override fun recordTransactions(txs: Iterable<SignedTransaction>) {
                     for (stx in txs) {

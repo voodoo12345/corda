@@ -27,7 +27,7 @@ import kotlin.reflect.KClass
 
 @Suppress("LeakingThis")
 open class MockServiceHubInternal(
-        customVault: VaultService? = null,
+        val customVault: VaultService? = null,
         val keyManagement: KeyManagementService? = null,
         val net: MessagingServiceInternal? = null,
         val identity: IdentityService? = MOCK_IDENTITY_SERVICE,
@@ -38,7 +38,8 @@ open class MockServiceHubInternal(
         val flowFactory: FlowLogicRefFactory? = FlowLogicRefFactory(),
         val schemas: SchemaService? = NodeSchemaService()
 ) : ServiceHubInternal() {
-    override val vaultService: VaultService = customVault ?: NodeVaultService(this, makeTestDataSourceProperties())
+    override val vaultService: VaultService
+        get() = customVault ?: throw UnsupportedOperationException()
     override val keyManagementService: KeyManagementService
         get() = keyManagement ?: throw UnsupportedOperationException()
     override val identityService: IdentityService
