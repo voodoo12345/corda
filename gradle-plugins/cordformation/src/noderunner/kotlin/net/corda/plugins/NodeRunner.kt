@@ -9,30 +9,18 @@ import java.nio.file.Paths
 
 
 fun main(args: Array<String>) {
-    // TODO: Use an args parser with help options.
-    if(GraphicsEnvironment.isHeadless() || (!args.isEmpty() && (args[0] == "--headless"))) {
-        NodeRunner(true).run()
-    } else {
-        Application.launch(NodeRunnerApp::class.java)
-    }
+    NodeRunner().run()
 }
 
-class NodeRunner(val isHeadless: Boolean = false) {
+class NodeRunner() {
     private companion object {
         val jarName = "corda.jar"
         val nodeConfName = "node.conf"
     }
 
-    data class CordaProcess(val process: Process, val name: String)
-
-    private var processes = mutableListOf<CordaProcess>()
-    var onProcess: (CordaProcess) -> Unit = {}
-    private var alive = true
-
     fun run() {
         val workingDir = Paths.get(System.getProperty("user.dir")).toFile()
         println("Starting node runner in $workingDir")
-        Runtime.getRuntime().addShutdownHook(Thread({ shutdown() }))
 
         workingDir.list().map { File(workingDir, it) }.forEach {
             if (isNode(it)) {
@@ -45,10 +33,7 @@ class NodeRunner(val isHeadless: Boolean = false) {
         }
 
         println("Started ${processes.size} processes")
-        while (alive) {
-            Thread.sleep(500)
-        }
-        println("Node runner exited")
+        println("Node runner finished")
     }
 
     private fun isNode(maybeNodeDir: File) = maybeNodeDir.isDirectory
@@ -62,12 +47,12 @@ class NodeRunner(val isHeadless: Boolean = false) {
 
     private fun startNode(nodeDir: File) {
         println("Starting node in $nodeDir")
-        registerProcess(CordaProcess(execCordaJar(nodeDir), "${nodeDir.toPath().fileName}"))
+        execCordaJar(nodeDir)
     }
 
     private fun startWebServer(webserverDir: File) {
         println("Starting webserver in $webserverDir")
-        registerProcess(CordaProcess(execCordaJar(webserverDir, listOf("--webserver")), "${webserverDir.toPath().fileName}-web"))
+        execCordaJar(webserverDir, listOf("--webserver"))
     }
 
     private fun execCordaJar(dir: File, args: List<String> = listOf()): Process {
@@ -81,26 +66,5 @@ class NodeRunner(val isHeadless: Boolean = false) {
         }
         builder.directory(dir)
         return builder.start()
-    }
-
-    private fun registerProcess(process: CordaProcess) {
-        processes.add(process)
-        onProcess(process)
-    }
-
-    fun shutdown() {
-        println("Shutting down")
-        if(alive) {
-            println("Stopping all processes")
-            processes.forEach { it.process.destroy() }
-            try {
-                println("Awaiting all processes to exit")
-                processes.forEach { it.process.waitFor() }
-            } catch (e: InterruptedException) {
-                println("Forcefully killing all processes")
-                processes.forEach { it.process.destroyForcibly() }
-            }
-            alive = false
-        }
     }
 }
