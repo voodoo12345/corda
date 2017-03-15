@@ -78,7 +78,7 @@ class ValidatingNotaryServiceTests {
         assertEquals(setOf(expectedMissingKey), missingKeys)
     }
 
-    private fun runClient(stx: SignedTransaction): ListenableFuture<DigitalSignature.WithKey> {
+    private fun runClient(stx: SignedTransaction): ListenableFuture<List<DigitalSignature.WithKey>> {
         val flow = NotaryFlow.Client(stx)
         val future = clientNode.services.startFlow(flow).resultFuture
         net.runNetwork()
@@ -86,7 +86,7 @@ class ValidatingNotaryServiceTests {
     }
 
     fun issueState(node: AbstractNode): StateAndRef<*> {
-        val tx = DummyContract.generateInitial(node.info.legalIdentity.ref(0), Random().nextInt(), notaryNode.info.notaryIdentity)
+        val tx = DummyContract.generateInitial(Random().nextInt(), notaryNode.info.notaryIdentity, node.info.legalIdentity.ref(0))
         val nodeKey = node.services.legalIdentityKey
         tx.signWith(nodeKey)
         val notaryKeyPair = notaryNode.services.notaryIdentityKey

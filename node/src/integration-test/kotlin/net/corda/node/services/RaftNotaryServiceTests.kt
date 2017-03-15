@@ -53,12 +53,12 @@ class RaftNotaryServiceTests : NodeBasedTest() {
 
         val ex = assertFailsWith(NotaryException::class) { secondSpend.resultFuture.getOrThrow() }
         val error = ex.error as NotaryError.Conflict
-        assertEquals(error.tx, secondSpendTx.tx)
+        assertEquals(error.txId, secondSpendTx.id)
     }
 
     private fun issueState(node: AbstractNode, notary: Party, notaryKey: KeyPair): StateAndRef<*> {
         return databaseTransaction(node.database) {
-            val tx = DummyContract.generateInitial(node.info.legalIdentity.ref(0), Random().nextInt(), notary)
+            val tx = DummyContract.generateInitial(Random().nextInt(), notary, node.info.legalIdentity.ref(0))
             tx.signWith(node.services.legalIdentityKey)
             tx.signWith(notaryKey)
             val stx = tx.toSignedTransaction()

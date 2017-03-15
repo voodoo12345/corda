@@ -170,9 +170,9 @@ To run from the command line in Windows:
 To run from IntelliJ:
 
 1. Open the Corda project in IntelliJ and import the Gradle project
-2. Run the ``Notary Demo: Run Nodes`` configuration to start the nodes. Once all nodes are started you will see several
+2. Run the ``Raft Notary Demo: Run Nodes`` configuration to start the nodes. Once all nodes are started you will see several
    "Node started up and registered in ..." messages
-3. Run the ``Notary Demo: Run Notarisation`` configuration to make a call to the "Party" node to initiate notarisation requests
+3. Run the ``Raft Notary Demo: Run Notarisation`` configuration to make a call to the "Party" node to initiate notarisation requests
    In a few seconds you will see a message "Notarised 10 transactions" with a list of transaction ids and the signer public keys
 
 Notary nodes store consumed states in a replicated commit log, which is backed by a H2 database on each node.
@@ -259,8 +259,8 @@ Launch the Explorer application to visualize the issuance and transfer of cash f
 
 Using the following login details:
 
-- For the Bank of Corda node: localhost / port 10004 / username user1 / password test
-- For the Big Corporation node: localhost / port 10006 / username user1 / password test
+- For the Bank of Corda node: localhost / port 10004 / username bankUser / password test
+- For the Big Corporation node: localhost / port 10006 / username bigCorpUser / password test
 
 See https://docs.corda.net/node-explorer.html for further details on usage.
 

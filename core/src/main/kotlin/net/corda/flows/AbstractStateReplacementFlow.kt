@@ -11,30 +11,42 @@ import net.corda.core.crypto.signWithECDSA
 import net.corda.core.flows.FlowException
 import net.corda.core.flows.FlowLogic
 import net.corda.core.node.recordTransactions
+import net.corda.core.serialization.CordaSerializable
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.transactions.WireTransaction
 import net.corda.core.utilities.ProgressTracker
 import net.corda.core.utilities.UntrustworthyData
-import net.corda.flows.AbstractStateReplacementFlow.Acceptor
-import net.corda.flows.AbstractStateReplacementFlow.Instigator
+import net.corda.core.utilities.unwrap
 
 /**
  * Abstract flow to be used for replacing one state with another, for example when changing the notary of a state.
  * Notably this requires a one to one replacement of states, states cannot be split, merged or issued as part of these
  * flows.
- *
- * The [Instigator] assembles the transaction for state replacement and sends out change proposals to all participants
- * ([Acceptor]) of that state. If participants agree to the proposed change, they each sign the transaction.
- * Finally, [Instigator] sends the transaction containing all signatures back to each participant so they can record it and
- * use the new updated state for future transactions.
  */
 abstract class AbstractStateReplacementFlow {
-    data class Proposal<out T>(val stateRef: StateRef, val modification: T, val stx: SignedTransaction)
+    /**
+     * The [Proposal] contains the details of proposed state modification.
+     * This is the message sent by the [Instigator] to all participants([Acceptor]) during the state replacement process.
+     *
+     * @param M the type of a class representing proposed modification by the instigator.
+     */
+    @CordaSerializable
+    data class Proposal<out M>(val stateRef: StateRef, val modification: M, val stx: SignedTransaction)
 
-    abstract class Instigator<out S : ContractState, out T>(
+    /**
+     * The [Instigator] assembles the transaction for state replacement and sends out change proposals to all participants
+     * ([Acceptor]) of that state. If participants agree to the proposed change, they each sign the transaction.
+     * Finally, [Instigator] sends the transaction containing all participants' signatures to the notary for signature, and
+     * then back to each participant so they can record it and use the new updated state for future transactions.
+     *
+     * @param S the input contract state type
+     * @param T the output contract state type, this can be different from [S]. For example, in contract upgrade, the output state type can be different from the input state type after the upgrade process.
+     * @param M the type of a class representing proposed modification by the instigator.
+     */
+    abstract class Instigator<out S : ContractState, out T : ContractState, out M>(
             val originalState: StateAndRef<S>,
-            val modification: T,
-            override val progressTracker: ProgressTracker = tracker()) : FlowLogic<StateAndRef<S>>() {
+            val modification: M,
+            override val progressTracker: ProgressTracker = tracker()) : FlowLogic<StateAndRef<T>>() {
         companion object {
             object SIGNING : ProgressTracker.Step("Requesting signatures from other parties")
             object NOTARY : ProgressTracker.Step("Requesting notary signature")
@@ -44,7 +56,7 @@ abstract class AbstractStateReplacementFlow {
 
         @Suspendable
         @Throws(StateReplacementException::class)
-        override fun call(): StateAndRef<S> {
+        override fun call(): StateAndRef<T> {
             val (stx, participants) = assembleTx()
 
             progressTracker.currentStep = SIGNING
@@ -53,7 +65,7 @@ abstract class AbstractStateReplacementFlow {
             val me = listOf(myKey)
 
             val signatures = if (participants == me) {
-                listOf(getNotarySignature(stx))
+                getNotarySignatures(stx)
             } else {
                 collectSignatures(participants - me, stx)
             }
@@ -77,7 +89,7 @@ abstract class AbstractStateReplacementFlow {
 
             val allPartySignedTx = stx + participantSignatures
 
-            val allSignatures = participantSignatures + getNotarySignature(allPartySignedTx)
+            val allSignatures = participantSignatures + getNotarySignatures(allPartySignedTx)
             parties.forEach { send(it, allSignatures) }
 
             return allSignatures
@@ -95,7 +107,7 @@ abstract class AbstractStateReplacementFlow {
         }
 
         @Suspendable
-        private fun getNotarySignature(stx: SignedTransaction): DigitalSignature.WithKey {
+        private fun getNotarySignatures(stx: SignedTransaction): List<DigitalSignature.WithKey> {
             progressTracker.currentStep = NOTARY
             try {
                 return subFlow(NotaryFlow.Client(stx))
@@ -105,8 +117,10 @@ abstract class AbstractStateReplacementFlow {
         }
     }
 
+    // Type parameter should ideally be Unit but that prevents Java code from subclassing it (https://youtrack.jetbrains.com/issue/KT-15964).
+    // We use Void? instead of Unit? as that's what you'd use in Java.
     abstract class Acceptor<in T>(val otherSide: Party,
-                                  override val progressTracker: ProgressTracker = tracker()) : FlowLogic<Unit>() {
+                                  override val progressTracker: ProgressTracker = tracker()) : FlowLogic<Void?>() {
         companion object {
             object VERIFYING : ProgressTracker.Step("Verifying state replacement proposal")
             object APPROVING : ProgressTracker.Step("State replacement approved")
@@ -116,7 +130,7 @@ abstract class AbstractStateReplacementFlow {
 
         @Suspendable
         @Throws(StateReplacementException::class)
-        override fun call() {
+        override fun call(): Void? {
             progressTracker.currentStep = VERIFYING
             val maybeProposal: UntrustworthyData<Proposal<T>> = receive(otherSide)
             val stx: SignedTransaction = maybeProposal.unwrap {
@@ -125,6 +139,7 @@ abstract class AbstractStateReplacementFlow {
                 it.stx
             }
             approve(stx)
+            return null
         }
 
         @Suspendable

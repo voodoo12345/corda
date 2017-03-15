@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.SerializerProvider
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import com.fasterxml.jackson.databind.annotation.JsonSerialize
 import com.google.common.annotations.VisibleForTesting
+import net.corda.core.serialization.CordaSerializable
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.DayOfWeek
@@ -34,10 +35,11 @@ import java.util.*
  *
  * @param T the type of the token, for example [Currency].
  */
+@CordaSerializable
 data class Amount<T>(val quantity: Long, val token: T) : Comparable<Amount<T>> {
     companion object {
         /**
-         * Build an amount from a decimal representation. For example, with an input of "12.34" GBP,
+         * Build a currency amount from a decimal representation. For example, with an input of "12.34" GBP,
          * returns an amount with a quantity of "1234".
          *
          * @see Amount<Currency>.toDecimal
@@ -45,6 +47,66 @@ data class Amount<T>(val quantity: Long, val token: T) : Comparable<Amount<T>> {
         fun fromDecimal(quantity: BigDecimal, currency: Currency) : Amount<Currency> {
             val longQuantity = quantity.movePointRight(currency.defaultFractionDigits).toLong()
             return Amount(longQuantity, currency)
+        }
+
+        private val currencySymbols: Map<String, Currency> = mapOf(
+                "$" to USD,
+                "£" to GBP,
+                "€" to EUR,
+                "¥" to JPY,
+                "₽" to RUB
+        )
+        private val currencyCodes: Map<String, Currency> by lazy { Currency.getAvailableCurrencies().map { it.currencyCode to it }.toMap() }
+
+        /**
+         * Returns an amount that is equal to the given currency amount in text. Examples of what is supported:
+         *
+         * - 12 USD
+         * - 14.50 USD
+         * - 10 USD
+         * - 30 CHF
+         * - $10.24
+         * - £13
+         * - €5000
+         *
+         * Note this method does NOT respect internationalisation rules: it ignores commas and uses . as the
+         * decimal point separator, always. It also ignores the users locale:
+         *
+         * - $ is always USD,
+         * - £ is always GBP
+         * - € is always the Euro
+         * - ¥ is always Japanese Yen.
+         * - ₽ is always the Russian ruble.
+         *
+         * Thus an input of $12 expecting some other countries dollar will not work. Do your own parsing if
+         * you need correct handling of currency amounts with locale-sensitive handling.
+         *
+         * @throws IllegalArgumentException if the input string was not understood.
+         */
+        fun parseCurrency(input: String): Amount<Currency> {
+            val i = input.filter { it != ',' }
+            try {
+                // First check the symbols at the front.
+                for ((symbol, currency) in currencySymbols) {
+                    if (i.startsWith(symbol)) {
+                        val rest = i.substring(symbol.length)
+                        return fromDecimal(BigDecimal(rest), currency)
+                    }
+                }
+                // Now check the codes at the end.
+                val split = i.split(' ')
+                if (split.size == 2) {
+                    val (rest, code) = split
+                    for ((cc, currency) in currencyCodes) {
+                        if (cc == code) {
+                            return fromDecimal(BigDecimal(rest), currency)
+                        }
+                    }
+                }
+            } catch(e: Exception) {
+                throw IllegalArgumentException("Could not parse $input as a currency", e)
+            }
+            throw IllegalArgumentException("Did not recognise the currency in $input or could not parse")
         }
     }
 
@@ -63,17 +125,17 @@ data class Amount<T>(val quantity: Long, val token: T) : Comparable<Amount<T>> {
     constructor(quantity: BigInteger, token: T) : this(quantity.toLong(), token)
 
     operator fun plus(other: Amount<T>): Amount<T> {
-        checkCurrency(other)
+        checkToken(other)
         return Amount(Math.addExact(quantity, other.quantity), token)
     }
 
     operator fun minus(other: Amount<T>): Amount<T> {
-        checkCurrency(other)
+        checkToken(other)
         return Amount(Math.subtractExact(quantity, other.quantity), token)
     }
 
-    private fun checkCurrency(other: Amount<T>) {
-        require(other.token == token) { "Currency mismatch: ${other.token} vs $token" }
+    private fun checkToken(other: Amount<T>) {
+        require(other.token == token) { "Token mismatch: ${other.token} vs $token" }
     }
 
     operator fun div(other: Long): Amount<T> = Amount(quantity / other, token)
@@ -81,10 +143,16 @@ data class Amount<T>(val quantity: Long, val token: T) : Comparable<Amount<T>> {
     operator fun div(other: Int): Amount<T> = Amount(quantity / other, token)
     operator fun times(other: Int): Amount<T> = Amount(Math.multiplyExact(quantity, other.toLong()), token)
 
-    override fun toString(): String = (BigDecimal(quantity).divide(BigDecimal(100))).setScale(2).toPlainString() + " " + token
+    override fun toString(): String {
+        val bd = if (token is Currency)
+            BigDecimal(quantity).movePointLeft(token.defaultFractionDigits)
+        else
+            BigDecimal(quantity)
+        return bd.toPlainString() + " " + token
+    }
 
     override fun compareTo(other: Amount<T>): Int {
-        checkCurrency(other)
+        checkToken(other)
         return quantity.compareTo(other.quantity)
     }
 }
@@ -108,12 +176,14 @@ fun <T> Iterable<Amount<T>>.sumOrZero(currency: T) = if (iterator().hasNext()) s
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /** A [FixOf] identifies the question side of a fix: what day, tenor and type of fix ("LIBOR", "EURIBOR" etc) */
+@CordaSerializable
 data class FixOf(val name: String, val forDay: LocalDate, val ofTenor: Tenor)
 
 /** A [Fix] represents a named interest rate, on a given day, for a given duration. It can be embedded in a tx. */
 data class Fix(val of: FixOf, val value: BigDecimal) : CommandData
 
 /** Represents a textual expression of e.g. a formula */
+@CordaSerializable
 @JsonDeserialize(using = ExpressionDeserializer::class)
 @JsonSerialize(using = ExpressionSerializer::class)
 data class Expression(val expr: String)
@@ -131,6 +201,7 @@ object ExpressionDeserializer : JsonDeserializer<Expression>() {
 }
 
 /** Placeholder class for the Tenor datatype - which is a standardised duration of time until maturity */
+@CordaSerializable
 data class Tenor(val name: String) {
     private val amount: Int
     private val unit: TimeUnit
@@ -166,6 +237,7 @@ data class Tenor(val name: String) {
 
     override fun toString(): String = name
 
+    @CordaSerializable
     enum class TimeUnit(val code: String) {
         Day("D"), Week("W"), Month("M"), Year("Y")
     }
@@ -175,6 +247,7 @@ data class Tenor(val name: String) {
  * Simple enum for returning accurals adjusted or unadjusted.
  * We don't actually do anything with this yet though, so it's ignored for now.
  */
+@CordaSerializable
 enum class AccrualAdjustment {
     Adjusted, Unadjusted
 }
@@ -183,6 +256,7 @@ enum class AccrualAdjustment {
  * This is utilised in the [DateRollConvention] class to determine which way we should initially step when
  * finding a business day.
  */
+@CordaSerializable
 enum class DateRollDirection(val value: Long) { FORWARD(1), BACKWARD(-1) }
 
 /**
@@ -190,6 +264,7 @@ enum class DateRollDirection(val value: Long) { FORWARD(1), BACKWARD(-1) }
  * Depending on the accounting requirement, we can move forward until we get to a business day, or backwards.
  * There are some additional rules which are explained in the individual cases below.
  */
+@CordaSerializable
 enum class DateRollConvention {
     // direction() cannot be a val due to the throw in the Actual instance
 
@@ -235,6 +310,7 @@ enum class DateRollConvention {
  * Note that the first character cannot be a number (enum naming constraints), so we drop that
  * in the toString lest some people get confused.
  */
+@CordaSerializable
 enum class DayCountBasisDay {
     // We have to prefix 30 etc with a letter due to enum naming constraints.
     D30,
@@ -246,6 +322,7 @@ enum class DayCountBasisDay {
 }
 
 /** This forms the year part of the "Day Count Basis" used for interest calculation. */
+@CordaSerializable
 enum class DayCountBasisYear {
     // Ditto above comment for years.
     Y360,
@@ -257,6 +334,7 @@ enum class DayCountBasisYear {
 }
 
 /** Whether the payment should be made before the due date, or after it. */
+@CordaSerializable
 enum class PaymentRule {
     InAdvance, InArrears,
 }
@@ -266,6 +344,7 @@ enum class PaymentRule {
  * that would divide into (eg annually = 1, semiannual = 2, monthly = 12 etc).
  */
 @Suppress("unused")   // TODO: Revisit post-Vega and see if annualCompoundCount is still needed.
+@CordaSerializable
 enum class Frequency(val annualCompoundCount: Int) {
     Annual(1) {
         override fun offset(d: LocalDate, n: Long) = d.plusYears(1 * n)
@@ -304,7 +383,9 @@ fun LocalDate.isWorkingDay(accordingToCalendar: BusinessCalendar): Boolean = acc
  * typical feature of financial contracts, in which a business may not want a payment event to fall on a day when
  * no staff are around to handle problems.
  */
+@CordaSerializable
 open class BusinessCalendar private constructor(val holidayDates: List<LocalDate>) {
+    @CordaSerializable
     class UnknownCalendar(name: String) : Exception("$name not found")
 
     companion object {
@@ -434,6 +515,7 @@ fun calculateDaysBetween(startDate: LocalDate,
  * Enum for the types of netting that can be applied to state objects. Exact behaviour
  * for each type of netting is left to the contract to determine.
  */
+@CordaSerializable
 enum class NetType {
     /**
      * Close-out netting applies where one party is bankrupt or otherwise defaults (exact terms are contract specific),
@@ -461,6 +543,7 @@ enum class NetType {
  * @param defaultFractionDigits the number of digits normally after the decimal point when referring to quantities of
  * this commodity.
  */
+@CordaSerializable
 data class Commodity(val commodityCode: String,
                      val displayName: String,
                      val defaultFractionDigits: Int = 0) {
@@ -487,6 +570,7 @@ data class Commodity(val commodityCode: String,
  * So that the first time a state is issued this should be given a new UUID.
  * Subsequent copies and evolutions of a state should just copy the [externalId] and [id] fields unmodified.
  */
+@CordaSerializable
 data class UniqueIdentifier(val externalId: String? = null, val id: UUID = UUID.randomUUID()) : Comparable<UniqueIdentifier> {
     override fun toString(): String = if (externalId != null) "${externalId}_$id" else id.toString()
 

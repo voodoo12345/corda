@@ -1,6 +1,7 @@
 package net.corda.docs
 
 import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import net.corda.contracts.asset.Cash
 import net.corda.core.contracts.DOLLARS
 import net.corda.core.contracts.issuedBy
@@ -9,8 +10,9 @@ import net.corda.core.messaging.startFlow
 import net.corda.core.node.services.ServiceInfo
 import net.corda.core.node.services.Vault
 import net.corda.core.serialization.OpaqueBytes
-import net.corda.flows.CashCommand
-import net.corda.flows.CashFlow
+import net.corda.core.toFuture
+import net.corda.flows.CashIssueFlow
+import net.corda.flows.CashPaymentFlow
 import net.corda.node.driver.driver
 import net.corda.node.services.User
 import net.corda.node.services.startFlowPermission
@@ -20,6 +22,7 @@ import net.corda.testing.expectEvents
 import net.corda.testing.parallel
 import net.corda.testing.sequence
 import org.junit.Test
+import java.util.*
 import kotlin.concurrent.thread
 import kotlin.test.assertEquals
 
@@ -28,7 +31,10 @@ class IntegrationTestingTutorial {
     fun `alice bob cash exchange example`() {
         // START 1
         driver {
-            val testUser = User("testUser", "testPassword", permissions = setOf(startFlowPermission<CashFlow>()))
+            val testUser = User("testUser", "testPassword", permissions = setOf(
+                    startFlowPermission<CashIssueFlow>(),
+                    startFlowPermission<CashPaymentFlow>()
+            ))
             val (alice, bob, notary) = Futures.allAsList(
                     startNode("Alice", rpcUsers = listOf(testUser)),
                     startNode("Bob", rpcUsers = listOf(testUser)),
@@ -54,15 +60,19 @@ class IntegrationTestingTutorial {
 
             // START 4
             val issueRef = OpaqueBytes.of(0)
+            val futures = Stack<ListenableFuture<*>>()
             for (i in 1 .. 10) {
                 thread {
-                    aliceProxy.startFlow(::CashFlow, CashCommand.IssueCash(
-                            amount = i.DOLLARS,
-                            issueRef = issueRef,
-                            recipient = bob.nodeInfo.legalIdentity,
-                            notary = notary.nodeInfo.notaryIdentity
-                    ))
+                    futures.push(aliceProxy.startFlow(::CashIssueFlow,
+                            i.DOLLARS,
+                            issueRef,
+                            bob.nodeInfo.legalIdentity,
+                            notary.nodeInfo.notaryIdentity
+                    ).returnValue)
                 }
+            }
+            while (!futures.empty()) {
+                futures.pop().getOrThrow()
             }
 
             bobVaultUpdates.expectEvents {
@@ -82,11 +92,10 @@ class IntegrationTestingTutorial {
 
             // START 5
             for (i in 1 .. 10) {
-                val flowHandle = bobProxy.startFlow(::CashFlow, CashCommand.PayCash(
-                        amount = i.DOLLARS.issuedBy(alice.nodeInfo.legalIdentity.ref(issueRef)),
-                        recipient = alice.nodeInfo.legalIdentity
-                ))
-                flowHandle.returnValue.getOrThrow()
+                bobProxy.startFlow(::CashPaymentFlow,
+                        i.DOLLARS.issuedBy(alice.nodeInfo.legalIdentity.ref(issueRef)),
+                        alice.nodeInfo.legalIdentity
+                ).returnValue.getOrThrow()
             }
 
             aliceVaultUpdates.expectEvents {

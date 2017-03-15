@@ -5,11 +5,12 @@ import net.corda.core.contracts.Fix
 import net.corda.core.contracts.FixOf
 import net.corda.core.crypto.DigitalSignature
 import net.corda.core.crypto.Party
-import net.corda.core.crypto.SecureHash
 import net.corda.core.flows.FlowLogic
+import net.corda.core.serialization.CordaSerializable
 import net.corda.core.transactions.FilteredTransaction
 import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.utilities.ProgressTracker
+import net.corda.core.utilities.unwrap
 import net.corda.irs.flows.RatesFixFlow.FixOutOfRange
 import net.corda.irs.utilities.suggestInterestRateAnnouncementTimeWindow
 import java.math.BigDecimal
@@ -41,10 +42,14 @@ open class RatesFixFlow(protected val tx: TransactionBuilder,
         fun tracker(fixName: String) = ProgressTracker(QUERYING(fixName), WORKING, SIGNING)
     }
 
+    @CordaSerializable
     class FixOutOfRange(@Suppress("unused") val byAmount: BigDecimal) : Exception("Fix out of range by $byAmount")
 
+    @CordaSerializable
     data class QueryRequest(val queries: List<FixOf>, val deadline: Instant)
-    data class SignRequest(val rootHash: SecureHash, val ftx: FilteredTransaction)
+
+    @CordaSerializable
+    data class SignRequest(val ftx: FilteredTransaction)
 
     // DOCSTART 2
     @Suspendable
@@ -108,9 +113,7 @@ open class RatesFixFlow(protected val tx: TransactionBuilder,
                       val partialMerkleTx: FilteredTransaction) : FlowLogic<DigitalSignature.LegallyIdentifiable>() {
         @Suspendable
         override fun call(): DigitalSignature.LegallyIdentifiable {
-            val wtx = tx.toWireTransaction()
-            val rootHash = wtx.id
-            val resp = sendAndReceive<DigitalSignature.LegallyIdentifiable>(oracle, SignRequest(rootHash, partialMerkleTx))
+            val resp = sendAndReceive<DigitalSignature.LegallyIdentifiable>(oracle, SignRequest(partialMerkleTx))
             return resp.unwrap { sig ->
                 check(sig.signer == oracle)
                 tx.checkSignature(sig)

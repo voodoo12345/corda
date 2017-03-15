@@ -21,8 +21,6 @@ import net.corda.core.serialization.deserialize
 import net.corda.core.serialization.serialize
 import net.corda.core.utilities.loggerFor
 import net.corda.flows.sendRequest
-import net.corda.node.services.network.NetworkMapService.Companion.FETCH_FLOW_TOPIC
-import net.corda.node.services.network.NetworkMapService.Companion.SUBSCRIPTION_FLOW_TOPIC
 import net.corda.node.services.network.NetworkMapService.FetchMapResponse
 import net.corda.node.services.network.NetworkMapService.SubscribeResponse
 import net.corda.node.utilities.AddOrRemove
@@ -54,10 +52,10 @@ open class InMemoryNetworkMapCache : SingletonSerializeAsToken(), NetworkMapCach
     override val mapServiceRegistered: ListenableFuture<Unit> get() = _registrationFuture
 
     private var registeredForPush = false
-    protected var registeredNodes: MutableMap<Party, NodeInfo> = Collections.synchronizedMap(HashMap<Party, NodeInfo>())
+    protected var registeredNodes: MutableMap<CompositeKey, NodeInfo> = Collections.synchronizedMap(HashMap())
 
     override fun getPartyInfo(party: Party): PartyInfo? {
-        val node = registeredNodes[party]
+        val node = registeredNodes[party.owningKey]
         if (node != null) {
             return PartyInfo.Node(node)
         }
@@ -71,7 +69,7 @@ open class InMemoryNetworkMapCache : SingletonSerializeAsToken(), NetworkMapCach
         return null
     }
 
-    override fun getNodeByLegalIdentityKey(compositeKey: CompositeKey): NodeInfo? = registeredNodes[Party("", compositeKey)]
+    override fun getNodeByLegalIdentityKey(compositeKey: CompositeKey): NodeInfo? = registeredNodes[compositeKey]
 
     override fun track(): Pair<List<NodeInfo>, Observable<MapChange>> {
         synchronized(_changed) {
@@ -83,10 +81,10 @@ open class InMemoryNetworkMapCache : SingletonSerializeAsToken(), NetworkMapCach
                                ifChangedSinceVer: Int?): ListenableFuture<Unit> {
         if (subscribe && !registeredForPush) {
             // Add handler to the network, for updates received from the remote network map service.
-            net.addMessageHandler(NetworkMapService.PUSH_FLOW_TOPIC, DEFAULT_SESSION_ID) { message, r ->
+            net.addMessageHandler(NetworkMapService.PUSH_TOPIC, DEFAULT_SESSION_ID) { message, r ->
                 try {
                     val req = message.data.deserialize<NetworkMapService.Update>()
-                    val ackMessage = net.createMessage(NetworkMapService.PUSH_ACK_FLOW_TOPIC, DEFAULT_SESSION_ID,
+                    val ackMessage = net.createMessage(NetworkMapService.PUSH_ACK_TOPIC, DEFAULT_SESSION_ID,
                             NetworkMapService.UpdateAcknowledge(req.mapVersion, net.myAddress).serialize().bytes)
                     net.send(ackMessage, req.replyTo)
                     processUpdatePush(req)
@@ -101,7 +99,7 @@ open class InMemoryNetworkMapCache : SingletonSerializeAsToken(), NetworkMapCach
 
         // Fetch the network map and register for updates at the same time
         val req = NetworkMapService.FetchMapRequest(subscribe, ifChangedSinceVer, net.myAddress)
-        val future = net.sendRequest<FetchMapResponse>(FETCH_FLOW_TOPIC, req, networkMapAddress).map { resp ->
+        val future = net.sendRequest<FetchMapResponse>(NetworkMapService.FETCH_TOPIC, req, networkMapAddress).map { resp ->
             // We may not receive any nodes back, if the map hasn't changed since the version specified
             resp.nodes?.forEach { processRegistration(it) }
             Unit
@@ -113,7 +111,7 @@ open class InMemoryNetworkMapCache : SingletonSerializeAsToken(), NetworkMapCach
 
     override fun addNode(node: NodeInfo) {
         synchronized(_changed) {
-            val previousNode = registeredNodes.put(node.legalIdentity, node)
+            val previousNode = registeredNodes.put(node.legalIdentity.owningKey, node)
             if (previousNode == null) {
                 changePublisher.onNext(MapChange.Added(node))
             } else if (previousNode != node) {
@@ -124,7 +122,7 @@ open class InMemoryNetworkMapCache : SingletonSerializeAsToken(), NetworkMapCach
 
     override fun removeNode(node: NodeInfo) {
         synchronized(_changed) {
-            registeredNodes.remove(node.legalIdentity)
+            registeredNodes.remove(node.legalIdentity.owningKey)
             changePublisher.onNext(MapChange.Removed(node))
         }
     }
@@ -136,7 +134,7 @@ open class InMemoryNetworkMapCache : SingletonSerializeAsToken(), NetworkMapCach
     override fun deregisterForUpdates(net: MessagingService, service: NodeInfo): ListenableFuture<Unit> {
         // Fetch the network map and register for updates at the same time
         val req = NetworkMapService.SubscribeRequest(false, net.myAddress)
-        val future = net.sendRequest<SubscribeResponse>(SUBSCRIPTION_FLOW_TOPIC, req, service.address).map {
+        val future = net.sendRequest<SubscribeResponse>(NetworkMapService.SUBSCRIPTION_TOPIC, req, service.address).map {
             if (it.confirmed) Unit else throw NetworkCacheError.DeregistrationFailed()
         }
         _registrationFuture.setFuture(future)

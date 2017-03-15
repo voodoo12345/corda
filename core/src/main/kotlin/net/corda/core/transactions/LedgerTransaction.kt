@@ -4,6 +4,7 @@ import net.corda.core.contracts.*
 import net.corda.core.crypto.CompositeKey
 import net.corda.core.crypto.Party
 import net.corda.core.crypto.SecureHash
+import net.corda.core.serialization.CordaSerializable
 
 /**
  * A LedgerTransaction is derived from a [WireTransaction]. It is the result of doing the following operations:
@@ -16,6 +17,7 @@ import net.corda.core.crypto.SecureHash
  *
  * All the above refer to inputs using a (txhash, output index) pair.
  */
+@CordaSerializable
 class LedgerTransaction(
         /** The resolved input states which will be consumed/invalidated by the execution of this transaction. */
         override val inputs: List<StateAndRef<*>>,
@@ -54,6 +56,7 @@ class LedgerTransaction(
      *
      * @throws TransactionVerificationException if anything goes wrong.
      */
+    @Throws(TransactionVerificationException::class)
     fun verify() = type.verify(this)
 
     // TODO: When we upgrade to Kotlin 1.1 we can make this a data class again and have the compiler generate these.

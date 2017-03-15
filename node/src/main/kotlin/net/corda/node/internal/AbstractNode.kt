@@ -6,6 +6,8 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.google.common.util.concurrent.SettableFuture
 import net.corda.core.*
+import net.corda.core.contracts.Amount
+import net.corda.core.contracts.PartyAndReference
 import net.corda.core.crypto.Party
 import net.corda.core.crypto.X509Utilities
 import net.corda.core.flows.FlowLogic
@@ -16,15 +18,14 @@ import net.corda.core.messaging.SingleMessageRecipient
 import net.corda.core.node.*
 import net.corda.core.node.services.*
 import net.corda.core.node.services.NetworkMapCache.MapChange
+import net.corda.core.serialization.OpaqueBytes
 import net.corda.core.serialization.SingletonSerializeAsToken
 import net.corda.core.serialization.deserialize
 import net.corda.core.serialization.serialize
 import net.corda.core.transactions.SignedTransaction
-import net.corda.flows.CashCommand
-import net.corda.flows.CashFlow
-import net.corda.flows.FinalityFlow
-import net.corda.flows.sendRequest
+import net.corda.flows.*
 import net.corda.node.services.api.*
+import net.corda.node.services.config.FullNodeConfiguration
 import net.corda.node.services.config.NodeConfiguration
 import net.corda.node.services.config.configureWithDevSSLCertificate
 import net.corda.node.services.events.NodeSchedulerService
@@ -33,7 +34,6 @@ import net.corda.node.services.identity.InMemoryIdentityService
 import net.corda.node.services.keys.PersistentKeyManagementService
 import net.corda.node.services.network.InMemoryNetworkMapCache
 import net.corda.node.services.network.NetworkMapService
-import net.corda.node.services.network.NetworkMapService.Companion.REGISTER_FLOW_TOPIC
 import net.corda.node.services.network.NetworkMapService.RegistrationResponse
 import net.corda.node.services.network.NodeRegistration
 import net.corda.node.services.network.PersistentNetworkMapService
@@ -51,7 +51,6 @@ import net.corda.node.utilities.databaseTransaction
 import org.apache.activemq.artemis.utils.ReusableLatch
 import org.jetbrains.exposed.sql.Database
 import org.slf4j.Logger
-import java.io.File
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Path
 import java.security.KeyPair
@@ -82,12 +81,11 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         val PUBLIC_IDENTITY_FILE_NAME = "identity-public"
 
         val defaultFlowWhiteList: Map<Class<out FlowLogic<*>>, Set<Class<*>>> = mapOf(
-                CashFlow::class.java to setOf(
-                        CashCommand.IssueCash::class.java,
-                        CashCommand.PayCash::class.java,
-                        CashCommand.ExitCash::class.java
-                ),
-                FinalityFlow::class.java to emptySet()
+                CashExitFlow::class.java to setOf(Amount::class.java, PartyAndReference::class.java),
+                CashIssueFlow::class.java to setOf(Amount::class.java, OpaqueBytes::class.java, Party::class.java),
+                CashPaymentFlow::class.java to setOf(Amount::class.java, Party::class.java),
+                FinalityFlow::class.java to emptySet(),
+                ContractUpgradeFlow.Instigator::class.java to emptySet()
         )
     }
 
@@ -99,6 +97,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
 
     protected abstract val log: Logger
     protected abstract val networkMapAddress: SingleMessageRecipient?
+    protected abstract val version: Version
 
     // We will run as much stuff in this single thread as possible to keep the risk of thread safety bugs low during the
     // low-performance prototyping period.
@@ -154,7 +153,6 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
     lateinit var keyManagement: KeyManagementService
     var inNodeNetworkMapService: NetworkMapService? = null
     var inNodeNotaryService: NotaryService? = null
-    var uniquenessProvider: UniquenessProvider? = null
     lateinit var identity: IdentityService
     lateinit var net: MessagingServiceInternal
     lateinit var netMapCache: NetworkMapCache
@@ -193,44 +191,16 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
             log.warn("Corda node is running in dev mode.")
             configuration.configureWithDevSSLCertificate()
         }
-        require(hasSSLCertificates()) { "SSL certificates not found." }
+        require(hasSSLCertificates()) { "Identity certificate not found. " +
+                "Please either copy your existing identity key and certificate from another node, " +
+                "or if you don't have one yet, fill out the config file and run corda.jar --initial-registration. " +
+                "Read more at: https://docs.corda.net/permissioning.html" }
 
         log.info("Node starting up ...")
 
         // Do all of this in a database transaction so anything that might need a connection has one.
         initialiseDatabasePersistence {
-            val storageServices = initialiseStorageService(configuration.baseDirectory)
-            storage = storageServices.first
-            checkpointStorage = storageServices.second
-            netMapCache = InMemoryNetworkMapCache()
-            net = makeMessagingService()
-            schemas = makeSchemaService()
-            vault = makeVaultService()
-
-            info = makeInfo()
-            identity = makeIdentityService()
-            // Place the long term identity key in the KMS. Eventually, this is likely going to be separated again because
-            // the KMS is meant for derived temporary keys used in transactions, and we're not supposed to sign things with
-            // the identity key. But the infrastructure to make that easy isn't here yet.
-            keyManagement = makeKeyManagementService()
-            flowLogicFactory = initialiseFlowLogicFactory()
-            scheduler = NodeSchedulerService(database, services, flowLogicFactory, unfinishedSchedules = busyNodeLatch)
-
-            val tokenizableServices = mutableListOf(storage, net, vault, keyManagement, identity, platformClock, scheduler)
-
-            customServices.clear()
-            customServices.addAll(buildPluginServices(tokenizableServices))
-
-            val uploaders: List<FileUploader> = listOf(storageServices.first.attachments as NodeAttachmentService) +
-                    customServices.filterIsInstance(AcceptsFileUpload::class.java)
-            (storage as StorageServiceImpl).initUploaders(uploaders)
-
-            // TODO: uniquenessProvider creation should be inside makeNotaryService(), but notary service initialisation
-            //       depends on smm, while smm depends on tokenizableServices, which uniquenessProvider is part of
-            advertisedServices.singleOrNull { it.type.isNotary() }?.let {
-                uniquenessProvider = makeUniquenessProvider(it.type)
-                tokenizableServices.add(uniquenessProvider!!)
-            }
+            val tokenizableServices = makeServices()
 
             smm = StateMachineManager(services,
                     listOf(tokenizableServices),
@@ -247,19 +217,14 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
                 }
             }
 
-            buildAdvertisedServices()
-
-            // TODO: this model might change but for now it provides some de-coupling
-            // Add vault observers
-            CashBalanceAsMetricsObserver(services, database)
-            ScheduledActivityObserver(services)
-            HibernateObserver(services)
+            makeVaultObservers()
 
             checkpointStorage.forEach {
                 isPreviousCheckpointsPresent = true
                 false
             }
             startMessagingService(CordaRPCOpsImpl(services, smm, database))
+            services.registerFlowInitiator(ContractUpgradeFlow.Instigator::class) { ContractUpgradeFlow.Acceptor(it) }
             runOnStop += Runnable { net.stop() }
             _networkMapRegistrationFuture.setFuture(registerWithNetworkMapIfConfigured())
             smm.start()
@@ -271,10 +236,54 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         return this
     }
 
+    /**
+     * Builds node internal, advertised, and plugin services.
+     * Returns a list of tokenizable services to be added to the serialisation context.
+     */
+    private fun makeServices(): MutableList<Any> {
+        val storageServices = initialiseStorageService(configuration.baseDirectory)
+        storage = storageServices.first
+        checkpointStorage = storageServices.second
+        netMapCache = InMemoryNetworkMapCache()
+        net = makeMessagingService()
+        schemas = makeSchemaService()
+        vault = makeVaultService(configuration.dataSourceProperties)
+
+        info = makeInfo()
+        identity = makeIdentityService()
+        // Place the long term identity key in the KMS. Eventually, this is likely going to be separated again because
+        // the KMS is meant for derived temporary keys used in transactions, and we're not supposed to sign things with
+        // the identity key. But the infrastructure to make that easy isn't here yet.
+        keyManagement = makeKeyManagementService()
+        flowLogicFactory = initialiseFlowLogicFactory()
+        scheduler = NodeSchedulerService(database, services, flowLogicFactory, unfinishedSchedules = busyNodeLatch)
+
+        val tokenizableServices = mutableListOf(storage, net, vault, keyManagement, identity, platformClock, scheduler)
+        makeAdvertisedServices(tokenizableServices)
+
+        customServices.clear()
+        customServices.addAll(makePluginServices(tokenizableServices))
+
+        initUploaders(storageServices)
+        return tokenizableServices
+    }
+
+    private fun initUploaders(storageServices: Pair<TxWritableStorageService, CheckpointStorage>) {
+        val uploaders: List<FileUploader> = listOf(storageServices.first.attachments as NodeAttachmentService) +
+                customServices.filterIsInstance(AcceptsFileUpload::class.java)
+        (storage as StorageServiceImpl).initUploaders(uploaders)
+    }
+
+    private fun makeVaultObservers() {
+        CashBalanceAsMetricsObserver(services, database)
+        ScheduledActivityObserver(services)
+        HibernateObserver(services)
+    }
+
     private fun makeInfo(): NodeInfo {
         val advertisedServiceEntries = makeServiceEntries()
         val legalIdentity = obtainLegalIdentity()
-        return NodeInfo(net.myAddress, legalIdentity, advertisedServiceEntries, findMyLocation())
+        return NodeInfo(net.myAddress, legalIdentity, version, advertisedServiceEntries, findMyLocation())
     }
 
     /**
@@ -343,7 +352,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         return FlowLogicRefFactory(flowWhitelist)
     }
 
-    private fun buildPluginServices(tokenizableServices: MutableList<Any>): List<Any> {
+    private fun makePluginServices(tokenizableServices: MutableList<Any>): List<Any> {
         val pluginServices = pluginRegistries.flatMap { x -> x.servicePlugins }
         val serviceList = mutableListOf<Any>()
         for (serviceConstructor in pluginServices) {
@@ -362,13 +371,13 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         return this
     }
 
-    private fun buildAdvertisedServices() {
+    private fun makeAdvertisedServices(tokenizableServices: MutableList<Any>) {
         val serviceTypes = info.advertisedServices.map { it.info.type }
         if (NetworkMapService.type in serviceTypes) makeNetworkMapService()
 
         val notaryServiceType = serviceTypes.singleOrNull { it.isNotary() }
         if (notaryServiceType != null) {
-            inNodeNotaryService = makeNotaryService(notaryServiceType)
+            inNodeNotaryService = makeNotaryService(notaryServiceType, tokenizableServices)
         }
     }
 
@@ -408,7 +417,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         val reg = NodeRegistration(info, instant.toEpochMilli(), ADD, expires)
         val legalIdentityKey = obtainLegalIdentityKey()
         val request = NetworkMapService.RegistrationRequest(reg.toWire(legalIdentityKey.private), net.myAddress)
-        return net.sendRequest(REGISTER_FLOW_TOPIC, request, networkMapAddress)
+        return net.sendRequest(NetworkMapService.REGISTER_TOPIC, request, networkMapAddress)
     }
 
     /** This is overriden by the mock node implementation to enable operation without any network map service */
@@ -424,13 +433,21 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         inNodeNetworkMapService = PersistentNetworkMapService(services)
     }
 
-    open protected fun makeNotaryService(type: ServiceType): NotaryService {
+    open protected fun makeNotaryService(type: ServiceType, tokenizableServices: MutableList<Any>): NotaryService {
         val timestampChecker = TimestampChecker(platformClock, 30.seconds)
+        val uniquenessProvider = makeUniquenessProvider(type)
+        tokenizableServices.add(uniquenessProvider)
 
         return when (type) {
-            SimpleNotaryService.type -> SimpleNotaryService(services, timestampChecker, uniquenessProvider!!)
-            ValidatingNotaryService.type -> ValidatingNotaryService(services, timestampChecker, uniquenessProvider!!)
-            RaftValidatingNotaryService.type -> RaftValidatingNotaryService(services, timestampChecker, uniquenessProvider!! as RaftUniquenessProvider)
+            SimpleNotaryService.type -> SimpleNotaryService(services, timestampChecker, uniquenessProvider)
+            ValidatingNotaryService.type -> ValidatingNotaryService(services, timestampChecker, uniquenessProvider)
+            RaftValidatingNotaryService.type -> RaftValidatingNotaryService(services, timestampChecker, uniquenessProvider as RaftUniquenessProvider)
+            BFTNonValidatingNotaryService.type -> with(configuration as FullNodeConfiguration) {
+                val nodeId = notaryNodeId ?: throw IllegalArgumentException("notaryNodeId value must be specified in the configuration")
+                val client = BFTSMaRt.Client(nodeId)
+                tokenizableServices.add(client)
+                BFTNonValidatingNotaryService(services, timestampChecker, nodeId, database, client)
+            }
             else -> {
                 throw IllegalArgumentException("Notary type ${type.id} is not handled by makeNotaryService.")
             }
@@ -453,7 +470,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
     }
 
     // TODO: sort out ordering of open & protected modifiers of functions in this class.
-    protected open fun makeVaultService(): VaultService = NodeVaultService(services)
+    protected open fun makeVaultService(dataSourceProperties: Properties): VaultService = NodeVaultService(services, dataSourceProperties)
 
     protected open fun makeSchemaService(): SchemaService = NodeSchemaService()
 
@@ -486,7 +503,7 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
         )
     }
 
-    protected open fun constructStorageService(attachments: NodeAttachmentService,
+    protected open fun constructStorageService(attachments: AttachmentStorage,
                                                transactionStorage: TransactionStorage,
                                                stateMachineRecordedTransactionMappingStorage: StateMachineRecordedTransactionMappingStorage) =
             StorageServiceImpl(attachments, transactionStorage, stateMachineRecordedTransactionMappingStorage)
@@ -531,13 +548,13 @@ abstract class AbstractNode(open val configuration: NodeConfiguration,
 
     protected open fun generateKeyPair() = cryptoGenerateKeyPair()
 
-    protected fun makeAttachmentStorage(dir: Path): NodeAttachmentService {
+    protected fun makeAttachmentStorage(dir: Path): AttachmentStorage {
         val attachmentsDir = dir / "attachments"
         try {
             attachmentsDir.createDirectory()
         } catch (e: FileAlreadyExistsException) {
         }
-        return NodeAttachmentService(attachmentsDir, services.monitoringService.metrics)
+        return NodeAttachmentService(attachmentsDir, configuration.dataSourceProperties, services.monitoringService.metrics)
     }
 
     protected fun createNodeDir() {

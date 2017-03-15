@@ -1,7 +1,7 @@
 package net.corda.testing.node
 
-import kotlinx.support.jdk8.collections.putIfAbsent
 import net.corda.core.contracts.Attachment
+import net.corda.core.contracts.PartyAndReference
 import net.corda.core.crypto.*
 import net.corda.core.flows.FlowLogic
 import net.corda.core.flows.FlowStateMachine
@@ -17,12 +17,15 @@ import net.corda.core.utilities.DUMMY_NOTARY
 import net.corda.node.services.persistence.InMemoryStateMachineRecordedTransactionMappingStorage
 import net.corda.testing.MEGA_CORP
 import net.corda.testing.MINI_CORP
+import net.corda.testing.MOCK_VERSION
 import rx.Observable
 import rx.subjects.PublishSubject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.security.KeyPair
 import java.security.PrivateKey
 import java.security.PublicKey
@@ -59,9 +62,9 @@ open class MockServices(val key: KeyPair = generateKeyPair()) : ServiceHub {
     override val vaultService: VaultService get() = throw UnsupportedOperationException()
     override val networkService: MessagingService get() = throw UnsupportedOperationException()
     override val networkMapCache: NetworkMapCache get() = throw UnsupportedOperationException()
-    override val clock: Clock get() = throw UnsupportedOperationException()
+    override val clock: Clock get() = Clock.systemUTC()
     override val schedulerService: SchedulerService get() = throw UnsupportedOperationException()
-    override val myInfo: NodeInfo get() = NodeInfo(object : SingleMessageRecipient {}, Party("MegaCorp", key.public.composite))
+    override val myInfo: NodeInfo get() = NodeInfo(object : SingleMessageRecipient {}, Party("MegaCorp", key.public.composite), MOCK_VERSION)
 }
 
 @ThreadSafe
@@ -73,17 +76,15 @@ class MockIdentityService(val identities: List<Party>) : IdentityService, Single
 
     override fun registerIdentity(party: Party) { throw UnsupportedOperationException() }
     override fun getAllIdentities(): Iterable<Party> = ArrayList(keyToParties.values)
+    override fun partyFromAnonymous(party: AnonymousParty): Party? = keyToParties[party.owningKey]
+    override fun partyFromAnonymous(partyRef: PartyAndReference): Party? = partyFromAnonymous(partyRef.party)
     override fun partyFromKey(key: CompositeKey): Party? = keyToParties[key]
     override fun partyFromName(name: String): Party? = nameToParties[name]
 }
 
 
 class MockKeyManagementService(vararg initialKeys: KeyPair) : SingletonSerializeAsToken(), KeyManagementService {
-    override val keys: MutableMap<PublicKey, PrivateKey>
-
-    init {
-        keys = initialKeys.map { it.public to it.private }.toMap(HashMap())
-    }
+    override val keys: MutableMap<PublicKey, PrivateKey> = initialKeys.associateByTo(HashMap(), { it.public }, { it.private })
 
     val nextKeys = LinkedList<KeyPair>()
 
@@ -96,6 +97,8 @@ class MockKeyManagementService(vararg initialKeys: KeyPair) : SingletonSerialize
 
 class MockAttachmentStorage : AttachmentStorage {
     val files = HashMap<SecureHash, ByteArray>()
+    override var automaticallyExtractAttachments = false
+    override var storePath = Paths.get("")
 
     override fun openAttachment(id: SecureHash): Attachment? {
         val f = files[id] ?: return null

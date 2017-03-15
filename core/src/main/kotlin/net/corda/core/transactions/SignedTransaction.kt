@@ -1,5 +1,6 @@
 package net.corda.core.transactions
 
+import net.corda.core.contracts.AttachmentResolutionException
 import net.corda.core.contracts.NamedByHash
 import net.corda.core.contracts.TransactionResolutionException
 import net.corda.core.crypto.CompositeKey
@@ -7,8 +8,8 @@ import net.corda.core.crypto.DigitalSignature
 import net.corda.core.crypto.SecureHash
 import net.corda.core.crypto.signWithECDSA
 import net.corda.core.node.ServiceHub
+import net.corda.core.serialization.CordaSerializable
 import net.corda.core.serialization.SerializedBytes
-import java.io.FileNotFoundException
 import java.security.KeyPair
 import java.security.SignatureException
 import java.util.*
@@ -23,8 +24,7 @@ import java.util.*
  * A transaction ID should be the hash of the [WireTransaction] Merkle tree root. Thus adding or removing a signature does not change it.
  */
 data class SignedTransaction(val txBits: SerializedBytes<WireTransaction>,
-                             val sigs: List<DigitalSignature.WithKey>,
-                             override val id: SecureHash
+                             val sigs: List<DigitalSignature.WithKey>
 ) : NamedByHash {
     init {
         require(sigs.isNotEmpty())
@@ -33,12 +33,16 @@ data class SignedTransaction(val txBits: SerializedBytes<WireTransaction>,
     // TODO: This needs to be reworked to ensure that the inner WireTransaction is only ever deserialised sandboxed.
 
     /** Lazily calculated access to the deserialised/hashed transaction data. */
-    val tx: WireTransaction by lazy {
-        val temp = WireTransaction.deserialize(txBits)
-        check(temp.id == id) { "Supplied transaction ID does not match deserialized transaction's ID - this is probably a problem in serialization/deserialization" }
-        temp
-    }
+    val tx: WireTransaction by lazy { WireTransaction.deserialize(txBits) }
 
+    /**
+     * The Merkle root of the inner [WireTransaction]. Note that this is _not_ the same as the simple hash of
+     * [txBits], which would not use the Merkle tree structure. If the difference isn't clear, please consult
+     * the user guide section "Transaction tear-offs" to learn more about Merkle trees.
+     */
+    override val id: SecureHash get() = tx.id
+
+    @CordaSerializable
     class SignaturesMissingException(val missing: Set<CompositeKey>, val descriptions: List<String>, override val id: SecureHash) : NamedByHash, SignatureException() {
         override fun toString(): String {
             return "Missing signatures for $descriptions on transaction ${id.prefixChars()} for ${missing.joinToString()}"
@@ -127,12 +131,12 @@ data class SignedTransaction(val txBits: SerializedBytes<WireTransaction>,
      * [WireTransaction.toLedgerTransaction] with the passed in [ServiceHub] to resolve the dependencies,
      * returning an unverified LedgerTransaction.
      *
-     * @throws FileNotFoundException if a required attachment was not found in storage.
+     * @throws AttachmentResolutionException if a required attachment was not found in storage.
      * @throws TransactionResolutionException if an input points to a transaction not found in storage.
      * @throws SignatureException if any signatures were invalid or unrecognised
      * @throws SignaturesMissingException if any signatures that should have been present are missing.
      */
-    @Throws(FileNotFoundException::class, TransactionResolutionException::class, SignaturesMissingException::class)
+    @Throws(AttachmentResolutionException::class, TransactionResolutionException::class, SignatureException::class)
     fun toLedgerTransaction(services: ServiceHub) = verifySignatures().toLedgerTransaction(services)
 
     /**
@@ -143,4 +147,6 @@ data class SignedTransaction(val txBits: SerializedBytes<WireTransaction>,
      * @return a digital signature of the transaction.
      */
     fun signWithECDSA(keyPair: KeyPair) = keyPair.signWithECDSA(this.id.bytes)
+
+    override fun toString(): String = "${javaClass.simpleName}(id=$id)"
 }

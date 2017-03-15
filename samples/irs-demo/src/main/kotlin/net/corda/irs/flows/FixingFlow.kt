@@ -10,6 +10,7 @@ import net.corda.core.node.NodeInfo
 import net.corda.core.node.PluginServiceHub
 import net.corda.core.node.services.ServiceType
 import net.corda.core.seconds
+import net.corda.core.serialization.CordaSerializable
 import net.corda.core.transactions.TransactionBuilder
 import net.corda.core.utilities.ProgressTracker
 import net.corda.core.utilities.trace
@@ -121,6 +122,7 @@ object FixingFlow {
 
 
     /** Used to set up the session between [Floater] and [Fixer] */
+    @CordaSerializable
     data class FixingSession(val ref: StateRef, val oracleType: ServiceType)
 
     /**
@@ -147,11 +149,13 @@ object FixingFlow {
             progressTracker.nextStep()
             val dealToFix = serviceHub.loadState(ref)
             val fixableDeal = (dealToFix.data as FixableDealState)
-            val parties = fixableDeal.parties.filter { it.owningKey != serviceHub.myInfo.legalIdentity.owningKey }
-            if (parties.isNotEmpty()) {
+            val parties = fixableDeal.parties.sortedBy { it.owningKey.toBase58String() }
+            val myKey = serviceHub.myInfo.legalIdentity.owningKey
+            if (parties[0].owningKey == myKey) {
                 val fixing = FixingSession(ref, fixableDeal.oracleType)
+                val counterparty = serviceHub.identityService.partyFromAnonymous(parties[1]) ?: throw IllegalStateException("Cannot resolve floater party")
                 // Start the Floater which will then kick-off the Fixer
-                subFlow(Floater(parties.first(), fixing))
+                subFlow(Floater(counterparty, fixing))
             }
         }
     }

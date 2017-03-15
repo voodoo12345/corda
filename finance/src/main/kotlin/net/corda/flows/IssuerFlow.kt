@@ -6,9 +6,11 @@ import net.corda.core.crypto.Party
 import net.corda.core.flows.FlowException
 import net.corda.core.flows.FlowLogic
 import net.corda.core.node.PluginServiceHub
+import net.corda.core.serialization.CordaSerializable
 import net.corda.core.serialization.OpaqueBytes
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.utilities.ProgressTracker
+import net.corda.core.utilities.unwrap
 import java.util.*
 
 /**
@@ -19,6 +21,7 @@ import java.util.*
  *  useful for creation of fake assets.
  */
 object IssuerFlow {
+    @CordaSerializable
     data class IssuanceRequestState(val amount: Amount<Currency>, val issueToParty: Party, val issuerPartyRef: OpaqueBytes)
 
     /**
@@ -78,7 +81,7 @@ object IssuerFlow {
             // invoke Cash subflow to issue Asset
             progressTracker.currentStep = ISSUING
             val bankOfCordaParty = serviceHub.myInfo.legalIdentity
-            val issueCashFlow = CashFlow(CashCommand.IssueCash(amount, issuerPartyRef, bankOfCordaParty, notaryParty))
+            val issueCashFlow = CashIssueFlow(amount, issuerPartyRef, bankOfCordaParty, notaryParty)
             val issueTx = subFlow(issueCashFlow)
             // NOTE: issueCashFlow performs a Broadcast (which stores a local copy of the txn to the ledger)
             // short-circuit when issuing to self
@@ -86,7 +89,7 @@ object IssuerFlow {
                 return issueTx
             // now invoke Cash subflow to Move issued assetType to issue requester
             progressTracker.currentStep = TRANSFERRING
-            val moveCashFlow = CashFlow(CashCommand.PayCash(amount.issuedBy(bankOfCordaParty.ref(issuerPartyRef)), issueTo))
+            val moveCashFlow = CashPaymentFlow(amount.issuedBy(bankOfCordaParty.ref(issuerPartyRef)), issueTo)
             val moveTx = subFlow(moveCashFlow)
             // NOTE: CashFlow PayCash calls FinalityFlow which performs a Broadcast (which stores a local copy of the txn to the ledger)
             return moveTx

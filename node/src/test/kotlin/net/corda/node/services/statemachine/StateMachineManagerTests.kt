@@ -2,29 +2,28 @@ package net.corda.node.services.statemachine
 
 import co.paralleluniverse.fibers.Fiber
 import co.paralleluniverse.fibers.Suspendable
-import co.paralleluniverse.strands.Strand.UncaughtExceptionHandler
 import com.google.common.util.concurrent.ListenableFuture
+import net.corda.core.*
 import net.corda.core.contracts.DOLLARS
 import net.corda.core.contracts.DummyState
 import net.corda.core.contracts.issuedBy
 import net.corda.core.crypto.Party
-import net.corda.core.crypto.SecureHash
 import net.corda.core.crypto.generateKeyPair
 import net.corda.core.flows.FlowException
 import net.corda.core.flows.FlowLogic
-import net.corda.core.getOrThrow
-import net.corda.core.map
 import net.corda.core.messaging.MessageRecipients
 import net.corda.core.node.services.PartyInfo
 import net.corda.core.node.services.ServiceInfo
-import net.corda.core.random63BitValue
-import net.corda.core.rootCause
 import net.corda.core.serialization.OpaqueBytes
 import net.corda.core.serialization.deserialize
 import net.corda.core.transactions.SignedTransaction
 import net.corda.core.transactions.TransactionBuilder
-import net.corda.flows.CashCommand
-import net.corda.flows.CashFlow
+import net.corda.core.utilities.LogHelper
+import net.corda.core.utilities.ProgressTracker
+import net.corda.core.utilities.ProgressTracker.Change
+import net.corda.core.utilities.unwrap
+import net.corda.flows.CashIssueFlow
+import net.corda.flows.CashPaymentFlow
 import net.corda.flows.FinalityFlow
 import net.corda.flows.NotaryFlow
 import net.corda.node.services.persistence.checkpoints
@@ -35,6 +34,7 @@ import net.corda.testing.expectEvents
 import net.corda.testing.initiateSingleShotFlow
 import net.corda.testing.node.InMemoryMessagingNetwork
 import net.corda.testing.node.InMemoryMessagingNetwork.MessageTransfer
+import net.corda.testing.node.InMemoryMessagingNetwork.ServicePeerAllocationStrategy.RoundRobin
 import net.corda.testing.node.MockNetwork
 import net.corda.testing.node.MockNetwork.MockNode
 import net.corda.testing.sequence
@@ -44,14 +44,22 @@ import org.assertj.core.api.AssertionsForClassTypes.assertThatExceptionOfType
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import rx.Notification
 import rx.Observable
 import java.util.*
 import kotlin.reflect.KClass
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class StateMachineManagerTests {
-    private val net = MockNetwork(servicePeerAllocationStrategy = InMemoryMessagingNetwork.ServicePeerAllocationStrategy.RoundRobin())
+    companion object {
+        init {
+            LogHelper.setLevel("+net.corda.flow")
+        }
+    }
+
+    private val net = MockNetwork(servicePeerAllocationStrategy = RoundRobin())
     private val sessionTransfers = ArrayList<SessionTransfer>()
     private lateinit var node1: MockNode
     private lateinit var node2: MockNode
@@ -101,7 +109,7 @@ class StateMachineManagerTests {
 
     @Test
     fun `exception while fiber suspended`() {
-        node2.services.registerFlowInitiator(ReceiveFlow::class) { SendFlow(2, it) }
+        node2.services.registerFlowInitiator(ReceiveFlow::class) { SendFlow("Hello", it) }
         val flow = ReceiveFlow(node2.info.legalIdentity)
         val fiber = node1.services.startFlow(flow) as FlowStateMachineImpl
         // Before the flow runs change the suspend action to throw an exception
@@ -109,17 +117,11 @@ class StateMachineManagerTests {
         fiber.actionOnSuspend = {
             throw exceptionDuringSuspend
         }
-        var uncaughtException: Throwable? = null
-        fiber.uncaughtExceptionHandler = UncaughtExceptionHandler { f, e ->
-            uncaughtException = e
-        }
         net.runNetwork()
         assertThatThrownBy {
             fiber.resultFuture.getOrThrow()
         }.isSameAs(exceptionDuringSuspend)
         assertThat(node1.smm.allStateMachines).isEmpty()
-        // Make sure it doesn't get swallowed up
-        assertThat(uncaughtException?.rootCause).isSameAs(exceptionDuringSuspend)
         // Make sure the fiber does actually terminate
         assertThat(fiber.isTerminated).isTrue()
     }
@@ -127,8 +129,7 @@ class StateMachineManagerTests {
     @Test
     fun `flow restarted just after receiving payload`() {
         node2.services.registerFlowInitiator(SendFlow::class) { ReceiveFlow(it).nonTerminating() }
-        val payload = random63BitValue()
-        node1.services.startFlow(SendFlow(payload, node2.info.legalIdentity))
+        node1.services.startFlow(SendFlow("Hello", node2.info.legalIdentity))
 
         // We push through just enough messages to get only the payload sent
         node2.pumpReceive()
@@ -137,7 +138,7 @@ class StateMachineManagerTests {
         node2.stop()
         net.runNetwork()
         val restoredFlow = node2.restartAndGetRestoredFlow<ReceiveFlow>(node1)
-        assertThat(restoredFlow.receivedPayloads[0]).isEqualTo(payload)
+        assertThat(restoredFlow.receivedPayloads[0]).isEqualTo("Hello")
     }
 
     @Test
@@ -177,15 +178,14 @@ class StateMachineManagerTests {
 
     @Test
     fun `flow loaded from checkpoint will respond to messages from before start`() {
-        val payload = random63BitValue()
-        node1.services.registerFlowInitiator(ReceiveFlow::class) { SendFlow(payload, it) }
+        node1.services.registerFlowInitiator(ReceiveFlow::class) { SendFlow("Hello", it) }
         node2.services.startFlow(ReceiveFlow(node1.info.legalIdentity).nonTerminating()) // Prepare checkpointed receive flow
         // Make sure the add() has finished initial processing.
         node2.smm.executor.flush()
         node2.disableDBCloseOnStop()
         node2.stop() // kill receiver
         val restoredFlow = node2.restartAndGetRestoredFlow<ReceiveFlow>(node1)
-        assertThat(restoredFlow.receivedPayloads[0]).isEqualTo(payload)
+        assertThat(restoredFlow.receivedPayloads[0]).isEqualTo("Hello")
     }
 
     @Test
@@ -244,7 +244,7 @@ class StateMachineManagerTests {
         net.runNetwork()
         node2.services.registerFlowInitiator(SendFlow::class) { ReceiveFlow(it).nonTerminating() }
         node3.services.registerFlowInitiator(SendFlow::class) { ReceiveFlow(it).nonTerminating() }
-        val payload = random63BitValue()
+        val payload = "Hello World"
         node1.services.startFlow(SendFlow(payload, node2.info.legalIdentity, node3.info.legalIdentity))
         net.runNetwork()
         val node2Flow = node2.getSingleFlow<ReceiveFlow>().first
@@ -255,14 +255,14 @@ class StateMachineManagerTests {
         assertSessionTransfers(node2,
                 node1 sent sessionInit(SendFlow::class, payload) to node2,
                 node2 sent sessionConfirm to node1,
-                node1 sent sessionEnd() to node2
+                node1 sent normalEnd to node2
                 //There's no session end from the other flows as they're manually suspended
         )
 
         assertSessionTransfers(node3,
                 node1 sent sessionInit(SendFlow::class, payload) to node3,
                 node3 sent sessionConfirm to node1,
-                node1 sent sessionEnd() to node3
+                node1 sent normalEnd to node3
                 //There's no session end from the other flows as they're manually suspended
         )
 
@@ -274,8 +274,8 @@ class StateMachineManagerTests {
     fun `receiving from multiple parties`() {
         val node3 = net.createNode(node1.info.address)
         net.runNetwork()
-        val node2Payload = random63BitValue()
-        val node3Payload = random63BitValue()
+        val node2Payload = "Test 1"
+        val node3Payload = "Test 2"
         node2.services.registerFlowInitiator(ReceiveFlow::class) { SendFlow(node2Payload, it) }
         node3.services.registerFlowInitiator(ReceiveFlow::class) { SendFlow(node3Payload, it) }
         val multiReceiveFlow = ReceiveFlow(node2.info.legalIdentity, node3.info.legalIdentity).nonTerminating()
@@ -289,14 +289,14 @@ class StateMachineManagerTests {
                 node1 sent sessionInit(ReceiveFlow::class) to node2,
                 node2 sent sessionConfirm to node1,
                 node2 sent sessionData(node2Payload) to node1,
-                node2 sent sessionEnd() to node1
+                node2 sent normalEnd to node1
         )
 
         assertSessionTransfers(node3,
                 node1 sent sessionInit(ReceiveFlow::class) to node3,
                 node3 sent sessionConfirm to node1,
                 node3 sent sessionData(node3Payload) to node1,
-                node3 sent sessionEnd() to node1
+                node3 sent normalEnd to node1
         )
     }
 
@@ -312,30 +312,30 @@ class StateMachineManagerTests {
                 node2 sent sessionData(20L) to node1,
                 node1 sent sessionData(11L) to node2,
                 node2 sent sessionData(21L) to node1,
-                node1 sent sessionEnd() to node2
+                node1 sent normalEnd to node2
         )
     }
 
     @Test
     fun `different notaries are picked when addressing shared notary identity`() {
         assertEquals(notary1.info.notaryIdentity, notary2.info.notaryIdentity)
-        node1.services.startFlow(CashFlow(CashCommand.IssueCash(
-                DOLLARS(2000),
+        node1.services.startFlow(CashIssueFlow(
+                2000.DOLLARS,
                 OpaqueBytes.of(0x01),
                 node1.info.legalIdentity,
-                notary1.info.notaryIdentity)))
+                notary1.info.notaryIdentity))
         // We pay a couple of times, the notary picking should go round robin
         for (i in 1 .. 3) {
-            node1.services.startFlow(CashFlow(CashCommand.PayCash(
-                    DOLLARS(500).issuedBy(node1.info.legalIdentity.ref(0x01)),
-                    node2.info.legalIdentity)))
+            node1.services.startFlow(CashPaymentFlow(
+                    500.DOLLARS.issuedBy(node1.info.legalIdentity.ref(0x01)),
+                    node2.info.legalIdentity))
             net.runNetwork()
         }
         val endpoint = net.messagingNetwork.endpoint(notary1.net.myAddress as InMemoryMessagingNetwork.PeerHandle)!!
         val party1Info = notary1.services.networkMapCache.getPartyInfo(notary1.info.notaryIdentity)!!
         assert(party1Info is PartyInfo.Service)
         val notary1Address: MessageRecipients = endpoint.getAddressOfParty(notary1.services.networkMapCache.getPartyInfo(notary1.info.notaryIdentity)!!)
-        assert(notary1Address is InMemoryMessagingNetwork.ServiceHandle)
+        assertThat(notary1Address).isInstanceOf(InMemoryMessagingNetwork.ServiceHandle::class.java)
         assertEquals(notary1Address, endpoint.getAddressOfParty(notary2.services.networkMapCache.getPartyInfo(notary2.info.notaryIdentity)!!))
         sessionTransfers.expectEvents(isStrict = false) {
             sequence(
@@ -367,36 +367,89 @@ class StateMachineManagerTests {
                     },
                     expect(match = { it.message is SessionConfirm }) {
                         it.message as SessionConfirm
-                        require(it.from == notary1.id)
+                        assertEquals(it.from, notary1.id)
                     }
             )
         }
     }
 
     @Test
-    fun `FlowException thrown on other side`() {
-        val erroringFlowFuture = node2.initiateSingleShotFlow(ReceiveFlow::class) {
-            ExceptionFlow { MyFlowException("Nothing useful") }
-        }
-        val receivingFiber = node1.services.startFlow(ReceiveFlow(node2.info.legalIdentity)) as FlowStateMachineImpl
+    fun `other side ends before doing expected send`() {
+        node2.services.registerFlowInitiator(ReceiveFlow::class) { NoOpFlow() }
+        val resultFuture = node1.services.startFlow(ReceiveFlow(node2.info.legalIdentity)).resultFuture
         net.runNetwork()
-        assertThatExceptionOfType(MyFlowException::class.java)
-                .isThrownBy { receivingFiber.resultFuture.getOrThrow() }
-                .withMessage("Nothing useful")
-                .withStackTraceContaining("ReceiveFlow")  // Make sure the stack trace is that of the receiving flow
-        databaseTransaction(node2.database) {
-            assertThat(node2.checkpointStorage.checkpoints()).isEmpty()
+        assertThatExceptionOfType(FlowSessionException::class.java).isThrownBy {
+            resultFuture.getOrThrow()
+        }.withMessageContaining(String::class.java.name)  // Make sure the exception message mentions the type the flow was expecting to receive
+    }
+
+    @Test
+    fun `non-FlowException thrown on other side`() {
+        val erroringFlowFuture = node2.initiateSingleShotFlow(ReceiveFlow::class) {
+            ExceptionFlow { Exception("evil bug!") }
         }
-        val errorFlow = erroringFlowFuture.getOrThrow()
-        assertThat(receivingFiber.isTerminated).isTrue()
-        assertThat((errorFlow.stateMachine as FlowStateMachineImpl).isTerminated).isTrue()
+        val erroringFlowSteps = erroringFlowFuture.flatMap { it.progressSteps }
+
+        val receiveFlow = ReceiveFlow(node2.info.legalIdentity)
+        val receiveFlowSteps = receiveFlow.progressSteps
+        val receiveFlowResult = node1.services.startFlow(receiveFlow).resultFuture
+
+        net.runNetwork()
+
+        assertThat(erroringFlowSteps.get()).containsExactly(
+                Notification.createOnNext(ExceptionFlow.START_STEP),
+                Notification.createOnError(erroringFlowFuture.get().exceptionThrown)
+        )
+
+        val receiveFlowException = assertFailsWith(FlowSessionException::class) {
+            receiveFlowResult.getOrThrow()
+        }
+        assertThat(receiveFlowException.message).doesNotContain("evil bug!")
+        assertThat(receiveFlowSteps.get()).containsExactly(
+                Notification.createOnNext(ReceiveFlow.START_STEP),
+                Notification.createOnError(receiveFlowException)
+        )
+
         assertSessionTransfers(
                 node1 sent sessionInit(ReceiveFlow::class) to node2,
                 node2 sent sessionConfirm to node1,
-                node2 sent sessionEnd(errorFlow.exceptionThrown) to node1
+                node2 sent erroredEnd() to node1
+        )
+    }
+
+    @Test
+    fun `FlowException thrown on other side`() {
+        val erroringFlow = node2.initiateSingleShotFlow(ReceiveFlow::class) {
+            ExceptionFlow { MyFlowException("Nothing useful") }
+        }
+        val erroringFlowSteps = erroringFlow.flatMap { it.progressSteps }
+
+        val receivingFiber = node1.services.startFlow(ReceiveFlow(node2.info.legalIdentity)) as FlowStateMachineImpl
+
+        net.runNetwork()
+
+        assertThatExceptionOfType(MyFlowException::class.java)
+                .isThrownBy { receivingFiber.resultFuture.getOrThrow() }
+                .withMessage("Nothing useful")
+                .withStackTraceContaining(ReceiveFlow::class.java.name)  // Make sure the stack trace is that of the receiving flow
+        databaseTransaction(node2.database) {
+            assertThat(node2.checkpointStorage.checkpoints()).isEmpty()
+        }
+
+        assertThat(receivingFiber.isTerminated).isTrue()
+        assertThat((erroringFlow.get().stateMachine as FlowStateMachineImpl).isTerminated).isTrue()
+        assertThat(erroringFlowSteps.get()).containsExactly(
+                Notification.createOnNext(ExceptionFlow.START_STEP),
+                Notification.createOnError(erroringFlow.get().exceptionThrown)
+        )
+
+        assertSessionTransfers(
+                node1 sent sessionInit(ReceiveFlow::class) to node2,
+                node2 sent sessionConfirm to node1,
+                node2 sent erroredEnd(erroringFlow.get().exceptionThrown) to node1
         )
         // Make sure the original stack trace isn't sent down the wire
-        assertThat((sessionTransfers.last().message as SessionEnd).errorResponse!!.stackTrace).isEmpty()
+        assertThat((sessionTransfers.last().message as ErrorSessionEnd).errorResponse!!.stackTrace).isEmpty()
     }
 
     @Test
@@ -449,7 +502,7 @@ class StateMachineManagerTests {
                 node1 sent sessionInit(ReceiveFlow::class) to node2,
                 node2 sent sessionConfirm to node1,
                 node2 sent sessionData("Hello") to node1,
-                node1 sent sessionEnd() to node2  // Unexpected session-end
+                node1 sent erroredEnd() to node2
         )
     }
 
@@ -495,11 +548,29 @@ class StateMachineManagerTests {
         ptx.signWith(node1.services.legalIdentityKey)
         val stx = ptx.toSignedTransaction()
 
-        val future1 = node2.services.startFlow(WaitingFlows.Waiter(stx.id)).resultFuture
-        val future2 = node1.services.startFlow(WaitingFlows.Committer(stx, node2.info.legalIdentity)).resultFuture
+        val committerFiber = node1
+                .initiateSingleShotFlow(WaitingFlows.Waiter::class) { WaitingFlows.Committer(it) }
+                .map { it.stateMachine }
+        val waiterStx = node2.services.startFlow(WaitingFlows.Waiter(stx, node1.info.legalIdentity)).resultFuture
         net.runNetwork()
-        future1.getOrThrow()
-        future2.getOrThrow()
+        assertThat(waiterStx.getOrThrow()).isEqualTo(committerFiber.getOrThrow().resultFuture.getOrThrow())
+    }
+
+    @Test
+    fun `committer throws exception before calling the finality flow`() {
+        val ptx = TransactionBuilder(notary = notary1.info.notaryIdentity)
+        ptx.addOutputState(DummyState())
+        ptx.signWith(node1.services.legalIdentityKey)
+        val stx = ptx.toSignedTransaction()
+
+        node1.services.registerFlowInitiator(WaitingFlows.Waiter::class) {
+            WaitingFlows.Committer(it) { throw Exception("Error") }
+        }
+        val waiter = node2.services.startFlow(WaitingFlows.Waiter(stx, node1.info.legalIdentity)).resultFuture
+        net.runNetwork()
+        assertThatExceptionOfType(FlowSessionException::class.java).isThrownBy {
+            waiter.getOrThrow()
+        }
     }
 
 
@@ -521,12 +592,10 @@ class StateMachineManagerTests {
     }
 
     private fun sessionInit(flowMarker: KClass<*>, payload: Any? = null) = SessionInit(0, flowMarker.java.name, payload)
-
     private val sessionConfirm = SessionConfirm(0, 0)
-
     private fun sessionData(payload: Any) = SessionData(0, payload)
-
-    private fun sessionEnd(error: FlowException? = null) = SessionEnd(0, error)
+    private val normalEnd = NormalSessionEnd(0)
+    private fun erroredEnd(errorResponse: FlowException? = null) = ErrorSessionEnd(0, errorResponse)
 
     private fun assertSessionTransfers(vararg expected: SessionTransfer) {
         assertThat(sessionTransfers).containsExactly(*expected)
@@ -556,13 +625,23 @@ class StateMachineManagerTests {
             is SessionData -> message.copy(recipientSessionId = 0)
             is SessionInit -> message.copy(initiatorSessionId = 0)
             is SessionConfirm -> message.copy(initiatorSessionId = 0, initiatedSessionId = 0)
-            is SessionEnd -> message.copy(recipientSessionId = 0)
+            is NormalSessionEnd -> message.copy(recipientSessionId = 0)
+            is ErrorSessionEnd -> message.copy(recipientSessionId = 0)
             else -> message
         }
     }
 
     private infix fun MockNode.sent(message: SessionMessage): Pair<Int, SessionMessage> = Pair(id, message)
     private infix fun Pair<Int, SessionMessage>.to(node: MockNode): SessionTransfer = SessionTransfer(first, second, node.net.myAddress)
+
+    private val FlowLogic<*>.progressSteps: ListenableFuture<List<Notification<ProgressTracker.Step>>> get() {
+        return progressTracker!!.changes
+                .ofType(Change.Position::class.java)
+                .map { it.newStep }
+                .materialize()
+                .toList()
+                .toFuture()
+    }
 
     private class NoOpFlow(val nonTerminating: Boolean = false) : FlowLogic<Unit>() {
         @Transient var flowStarted = false
@@ -577,7 +656,7 @@ class StateMachineManagerTests {
     }
 
 
-    private class SendFlow(val payload: Any, vararg val otherParties: Party) : FlowLogic<Unit>() {
+    private class SendFlow(val payload: String, vararg val otherParties: Party) : FlowLogic<Unit>() {
         init {
             require(otherParties.isNotEmpty())
         }
@@ -588,17 +667,22 @@ class StateMachineManagerTests {
 
 
     private class ReceiveFlow(vararg val otherParties: Party) : FlowLogic<Unit>() {
-        private var nonTerminating: Boolean = false
+        object START_STEP : ProgressTracker.Step("Starting")
+        object RECEIVED_STEP : ProgressTracker.Step("Received")
 
         init {
             require(otherParties.isNotEmpty())
         }
 
-        @Transient var receivedPayloads: List<Any> = emptyList()
+        override val progressTracker: ProgressTracker = ProgressTracker(START_STEP, RECEIVED_STEP)
+        private var nonTerminating: Boolean = false
+        @Transient var receivedPayloads: List<String> = emptyList()
 
         @Suspendable
         override fun call() {
-            receivedPayloads = otherParties.map { receive<Any>(it).unwrap { it } }
+            progressTracker.currentStep = START_STEP
+            receivedPayloads = otherParties.map { receive<String>(it).unwrap { it } }
+            progressTracker.currentStep = RECEIVED_STEP
             if (nonTerminating) {
                 Fiber.park()
             }
@@ -622,30 +706,38 @@ class StateMachineManagerTests {
     }
 
     private class ExceptionFlow<E : Exception>(val exception: () -> E) : FlowLogic<Nothing>() {
+        object START_STEP : ProgressTracker.Step("Starting")
+
+        override val progressTracker: ProgressTracker = ProgressTracker(START_STEP)
         lateinit var exceptionThrown: E
+
         override fun call(): Nothing {
+            progressTracker.currentStep = START_STEP
             exceptionThrown = exception()
             throw exceptionThrown
         }
     }
 
-    private class MyFlowException(message: String) : FlowException(message) {
+    private class MyFlowException(override val message: String) : FlowException() {
         override fun equals(other: Any?): Boolean = other is MyFlowException && other.message == this.message
-        override fun hashCode(): Int = message?.hashCode() ?: 31
+        override fun hashCode(): Int = message.hashCode()
     }
 
     private object WaitingFlows {
-        class Waiter(private val hash: SecureHash) : FlowLogic<Unit>() {
+        class Waiter(val stx: SignedTransaction, val otherParty: Party) : FlowLogic<SignedTransaction>() {
             @Suspendable
-            override fun call() {
-                waitForLedgerCommit(hash)
+            override fun call(): SignedTransaction {
+                send(otherParty, stx)
+                return waitForLedgerCommit(stx.id)
             }
         }
 
-        class Committer(private val stx: SignedTransaction, private val otherParty: Party) : FlowLogic<Unit>() {
+        class Committer(val otherParty: Party, val throwException: (() -> Exception)? = null) : FlowLogic<SignedTransaction>() {
             @Suspendable
-            override fun call() {
-                subFlow(FinalityFlow(stx, setOf(otherParty)))
+            override fun call(): SignedTransaction {
+                val stx = receive<SignedTransaction>(otherParty).unwrap { it }
+                if (throwException != null) throw throwException.invoke()
+                return subFlow(FinalityFlow(stx, setOf(otherParty))).single()
             }
         }
     }

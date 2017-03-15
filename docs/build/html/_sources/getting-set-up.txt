@@ -69,14 +69,18 @@ The Corda platform source code is available here:
 
     https://github.com/corda/corda.git
 
-and a basic CorDapp that you can use as the basis for your own CorDapps is available here:
+A CorDapp template that you can use as the basis for your own CorDapps is available here:
 
     https://github.com/corda/cordapp-template.git
 
-You can clone both of these repos to your local machine by running the command ``git clone [repo URL]``.
+And a simple example CorDapp for you to explore basic concepts is available here:
 
-By default, both repos will be on the ``master`` branch. However, this is an unstable development branch. You should check 
-out the latest milestone release (currently Milestone 7) instead by running ``git checkout release-M7``.
+	https://github.com/corda/cordapp-tutorial.git
+
+You can clone these repos to your local machine by running the command ``git clone [repo URL]``.
+
+By default, these repos will be on the ``master`` branch. However, this is an unstable development branch. You should check 
+out the latest release tag instead by running ``git checkout release-M9.0``.
 
 Opening Corda/CorDapps in IDEA
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

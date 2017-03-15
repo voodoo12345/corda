@@ -3,16 +3,16 @@ package net.corda.core.transactions
 import com.esotericsoftware.kryo.Kryo
 import net.corda.core.contracts.*
 import net.corda.core.crypto.CompositeKey
+import net.corda.core.crypto.MerkleTree
 import net.corda.core.crypto.Party
 import net.corda.core.crypto.SecureHash
 import net.corda.core.indexOfOrThrow
-import net.corda.core.node.ServiceHub
+import net.corda.core.node.ServicesForResolution
 import net.corda.core.serialization.SerializedBytes
-import net.corda.core.serialization.THREAD_LOCAL_KRYO
 import net.corda.core.serialization.deserialize
 import net.corda.core.serialization.serialize
+import net.corda.core.serialization.threadLocalP2PKryo
 import net.corda.core.utilities.Emoji
-import java.io.FileNotFoundException
 import java.security.PublicKey
 
 /**
@@ -42,10 +42,10 @@ class WireTransaction(
     @Volatile @Transient private var cachedBytes: SerializedBytes<WireTransaction>? = null
     val serialized: SerializedBytes<WireTransaction> get() = cachedBytes ?: serialize().apply { cachedBytes = this }
 
-    override val id: SecureHash by lazy { getMerkleTree().hash }
+    override val id: SecureHash by lazy { merkleTree.hash }
 
     companion object {
-        fun deserialize(data: SerializedBytes<WireTransaction>, kryo: Kryo = THREAD_LOCAL_KRYO.get()): WireTransaction {
+        fun deserialize(data: SerializedBytes<WireTransaction>, kryo: Kryo = threadLocalP2PKryo()): WireTransaction {
             val wtx = data.bytes.deserialize<WireTransaction>(kryo)
             wtx.cachedBytes = data
             return wtx
@@ -66,11 +66,11 @@ class WireTransaction(
      * Looks up identities and attachments from storage to generate a [LedgerTransaction]. A transaction is expected to
      * have been fully resolved using the resolution flow by this point.
      *
-     * @throws FileNotFoundException if a required attachment was not found in storage.
+     * @throws AttachmentResolutionException if a required attachment was not found in storage.
      * @throws TransactionResolutionException if an input points to a transaction not found in storage.
      */
-    @Throws(FileNotFoundException::class, TransactionResolutionException::class)
-    fun toLedgerTransaction(services: ServiceHub): LedgerTransaction {
+    @Throws(AttachmentResolutionException::class, TransactionResolutionException::class)
+    fun toLedgerTransaction(services: ServicesForResolution): LedgerTransaction {
         // Look up public keys to authenticated identities. This is just a stub placeholder and will all change in future.
         val authenticatedArgs = commands.map {
             val parties = it.signers.mapNotNull { pk -> services.identityService.partyFromKey(pk) }
@@ -78,7 +78,7 @@ class WireTransaction(
         }
         // Open attachments specified in this transaction. If we haven't downloaded them, we fail.
         val attachments = attachments.map {
-            services.storageService.attachments.openAttachment(it) ?: throw FileNotFoundException(it.toString())
+            services.storageService.attachments.openAttachment(it) ?: throw AttachmentResolutionException(it)
         }
         val resolvedInputs = inputs.map { StateAndRef(services.loadState(it), it) }
         return LedgerTransaction(resolvedInputs, outputs, authenticatedArgs, attachments, id, notary, mustSign, timestamp, type)
@@ -94,9 +94,7 @@ class WireTransaction(
     /**
      * Builds whole Merkle tree for a transaction.
      */
-    fun getMerkleTree(): MerkleTree {
-        return MerkleTree.getMerkleTree(calculateLeavesHashes())
-    }
+    val merkleTree: MerkleTree by lazy { MerkleTree.getMerkleTree(availableComponentHashes) }
 
     /**
      * Construction of partial transaction from WireTransaction based on filtering.
@@ -119,9 +117,9 @@ class WireTransaction(
 
     override fun toString(): String {
         val buf = StringBuilder()
-        buf.appendln("Transaction $id:")
+        buf.appendln("Transaction:")
         for (input in inputs) buf.appendln("${Emoji.rightArrow}INPUT:      $input")
-        for (output in outputs) buf.appendln("${Emoji.leftArrow}OUTPUT:     $output")
+        for (output in outputs) buf.appendln("${Emoji.leftArrow}OUTPUT:     ${output.data}")
         for (command in commands) buf.appendln("${Emoji.diamond}COMMAND:    $command")
         for (attachment in attachments) buf.appendln("${Emoji.paperclip}ATTACHMENT: $attachment")
         return buf.toString()

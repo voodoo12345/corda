@@ -1,7 +1,6 @@
 package net.corda.node.services.statemachine
 
 import net.corda.core.crypto.SecureHash
-import net.corda.node.services.statemachine.StateMachineManager.FlowSession
 
 // TODO revisit when Kotlin 1.1 is released and data classes can extend other classes
 interface FlowIORequest {
@@ -9,6 +8,8 @@ interface FlowIORequest {
     // don't have the original stack trace because it's in a suspended fiber.
     val stackTraceInCaseOfProblems: StackSnapshot
 }
+
+interface WaitingRequest : FlowIORequest
 
 interface SessionedFlowIORequest : FlowIORequest {
     val session: FlowSession
@@ -18,19 +19,22 @@ interface SendRequest : SessionedFlowIORequest {
     val message: SessionMessage
 }
 
-interface ReceiveRequest<T : SessionMessage> : SessionedFlowIORequest {
+interface ReceiveRequest<T : SessionMessage> : SessionedFlowIORequest, WaitingRequest {
     val receiveType: Class<T>
+    val userReceiveType: Class<*>?
 }
 
 data class SendAndReceive<T : SessionMessage>(override val session: FlowSession,
                                               override val message: SessionMessage,
-                                              override val receiveType: Class<T>) : SendRequest, ReceiveRequest<T> {
+                                              override val receiveType: Class<T>,
+                                              override val userReceiveType: Class<*>?) : SendRequest, ReceiveRequest<T> {
     @Transient
     override val stackTraceInCaseOfProblems: StackSnapshot = StackSnapshot()
 }
 
 data class ReceiveOnly<T : SessionMessage>(override val session: FlowSession,
-                                           override val receiveType: Class<T>) : ReceiveRequest<T> {
+                                           override val receiveType: Class<T>,
+                                           override val userReceiveType: Class<*>?) : ReceiveRequest<T> {
     @Transient
     override val stackTraceInCaseOfProblems: StackSnapshot = StackSnapshot()
 }
@@ -40,7 +44,7 @@ data class SendOnly(override val session: FlowSession, override val message: Ses
     override val stackTraceInCaseOfProblems: StackSnapshot = StackSnapshot()
 }
 
-data class WaitForLedgerCommit(val hash: SecureHash, val fiber: FlowStateMachineImpl<*>) : FlowIORequest {
+data class WaitForLedgerCommit(val hash: SecureHash, val fiber: FlowStateMachineImpl<*>) : WaitingRequest {
     @Transient
     override val stackTraceInCaseOfProblems: StackSnapshot = StackSnapshot()
 }
